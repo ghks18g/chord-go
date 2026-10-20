@@ -126,7 +126,7 @@ services:
   # ----------------------------------------------------
   scan-api:
     build:
-      context: ../../../chordscan
+      context: ../../../chord-infra
       dockerfile: docker/Dockerfile.scan-api
     container_name: chordscan-scan-api
     restart: unless-stopped
@@ -157,7 +157,7 @@ services:
   # ----------------------------------------------------
   indexer-api:
     build:
-      context: ../../../chordscan
+      context: ../../../chord-infra
       dockerfile: docker/Dockerfile.indexer
     container_name: chordscan-indexer-api
     restart: unless-stopped
@@ -188,7 +188,7 @@ services:
   # ----------------------------------------------------
   gas-relayer:
     build:
-      context: ../../../chordscan
+      context: ../../../chord-infra
       dockerfile: docker/Dockerfile.gas-relayer
     container_name: chordscan-gas-relayer
     restart: unless-stopped
@@ -213,7 +213,7 @@ services:
   # ----------------------------------------------------
   contract-verifier:
     build:
-      context: ../../../chordscan
+      context: ../../../chord-infra
       dockerfile: docker/Dockerfile.contract-verifier
     container_name: chordscan-contract-verifier
     restart: unless-stopped
@@ -244,7 +244,7 @@ services:
   # ----------------------------------------------------
   web:
     build:
-      context: ../../../chordscan
+      context: ../../../chord-infra
       dockerfile: docker/Dockerfile.web
     container_name: chordscan-web
     restart: unless-stopped
