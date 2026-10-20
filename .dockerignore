@@ -1,0 +1,6 @@
+.git
+*.out
+*.test
+.DS_Store
+bin/chordd
+bin/chordcli

@@ -1,0 +1,100 @@
+{
+  "chain_id": "chord_7613-1",
+  "evm_chain_id": 7613,
+  "consensus": {
+    "engine": "cometbft-ondemand",
+    "quorum": "3-of-4",
+    "create_empty_blocks": false,
+    "block_time_target_ms": 500
+  },
+  "validators": [
+    {
+      "id": 1,
+      "name": "CHORD Validator 1 (Gateway Proposer)",
+      "address": "0xa983D897D00482FEEf3000Ad2BEEf358B9fA06bC",
+      "voting_power": 2500,
+      "voting_percent": "25.0%",
+      "weight": 0.25
+    },
+    {
+      "id": 2,
+      "name": "CHORD Validator 2 (Private BFT Peer)",
+      "address": "0xAeA7958f66EEdCc146a988b11eb0268F68E5B9DF",
+      "voting_power": 2500,
+      "voting_percent": "25.0%",
+      "weight": 0.25
+    },
+    {
+      "id": 3,
+      "name": "CHORD Validator 3 (Private BFT Peer)",
+      "address": "0x4980B80169F964EecE5EDe078B53f207Afd0b921",
+      "voting_power": 2500,
+      "voting_percent": "25.0%",
+      "weight": 0.25
+    },
+    {
+      "id": 4,
+      "name": "CHORD Validator 4 (Private BFT Peer)",
+      "address": "0x483A0b4F5Db0C6ac6a7F67deE01494D45E266d18",
+      "voting_power": 2500,
+      "voting_percent": "25.0%",
+      "weight": 0.25
+    }
+  ],
+  "governance": {
+    "multisig": {
+      "address": "0x470cC21093319e612E9779cE2c1d53b0F84562F5",
+      "threshold": 2,
+      "total_owners": 4,
+      "owners": [
+        "0xa983D897D00482FEEf3000Ad2BEEf358B9fA06bC",
+        "0xAeA7958f66EEdCc146a988b11eb0268F68E5B9DF",
+        "0x4980B80169F964EecE5EDe078B53f207Afd0b921",
+        "0x483A0b4F5Db0C6ac6a7F67deE01494D45E266d18"
+      ],
+      "purpose": "CHORD Genesis Treasury, Airdrop Dispatcher, and Faucet Funding Authority"
+    }
+  },
+  "alloc": {
+    "0xa983D897D00482FEEf3000Ad2BEEf358B9fA06bC": {
+      "balance": "25000000000000000000000000",
+      "balance_hex": "0x14adf4b7320334b9000000",
+      "symbol": "CHOR",
+      "amount": "25,000,000",
+      "share": "25.0%",
+      "label": "Validator 1 Staking Equity"
+    },
+    "0xAeA7958f66EEdCc146a988b11eb0268F68E5B9DF": {
+      "balance": "25000000000000000000000000",
+      "balance_hex": "0x14adf4b7320334b9000000",
+      "symbol": "CHOR",
+      "amount": "25,000,000",
+      "share": "25.0%",
+      "label": "Validator 2 Staking Equity"
+    },
+    "0x4980B80169F964EecE5EDe078B53f207Afd0b921": {
+      "balance": "25000000000000000000000000",
+      "balance_hex": "0x14adf4b7320334b9000000",
+      "symbol": "CHOR",
+      "amount": "25,000,000",
+      "share": "25.0%",
+      "label": "Validator 3 Staking Equity"
+    },
+    "0x483A0b4F5Db0C6ac6a7F67deE01494D45E266d18": {
+      "balance": "25000000000000000000000000",
+      "balance_hex": "0x14adf4b7320334b9000000",
+      "symbol": "CHOR",
+      "amount": "25,000,000",
+      "share": "25.0%",
+      "label": "Validator 4 Staking Equity"
+    },
+    "0x470cC21093319e612E9779cE2c1d53b0F84562F5": {
+      "balance": "900000000000000000000000000",
+      "balance_hex": "0x2e87669c308736a04000000",
+      "symbol": "CHOR",
+      "amount": "900,000,000",
+      "share": "90.0%",
+      "label": "Chord Genesis Treasury & Airdrop Reserve"
+    }
+  }
+}

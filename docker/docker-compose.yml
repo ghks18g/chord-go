@@ -1,0 +1,76 @@
+services:
+  node1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: chord-node1
+    command: ["--port=8545", "--val-id=1"]
+    volumes:
+      - chord-node1-data:/root/.chord
+    ports:
+      - "8545:8545"     # EVM JSON-RPC & Integrated Endpoint
+    networks:
+      - chord-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  node2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: chord-node2
+    command: ["--port=8545", "--val-id=2"]
+    volumes:
+      - chord-node2-data:/root/.chord
+    networks:
+      - chord-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  node3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: chord-node3
+    command: ["--port=8545", "--val-id=3"]
+    volumes:
+      - chord-node3-data:/root/.chord
+    networks:
+      - chord-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  node4:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: chord-node4
+    command: ["--port=8545", "--val-id=4"]
+    volumes:
+      - chord-node4-data:/root/.chord
+    networks:
+      - chord-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+volumes:
+  chord-node1-data:
+  chord-node2-data:
+  chord-node3-data:
+  chord-node4-data:
+
+networks:
+  chord-net:
+    driver: bridge

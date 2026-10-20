@@ -1,0 +1,63 @@
+{
+	email ghks18g@gmail.com
+}
+
+# ========================================================
+# CHORD Chain & ChordScan Explorer (Production)
+# ========================================================
+
+# 1. ChordScan Explorer Web UI
+chordchain.space, scan.chordchain.space {
+	encode zstd gzip
+
+	# Modern Security Headers
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+	}
+
+	# Proxy to Next.js Web Explorer
+	reverse_proxy web:3000 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+}
+
+# 2. CHORD EVM JSON-RPC & CometBFT Node
+rpc.chordchain.space {
+	encode zstd gzip
+
+	# Global CORS Headers for EVM JSON-RPC & Web3 Wallets
+	header {
+		Access-Control-Allow-Origin *
+		Access-Control-Allow-Methods "POST, GET, OPTIONS"
+		Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With"
+		X-Content-Type-Options nosniff
+	}
+
+	# Handle Pre-flight CORS OPTIONS requests
+	@options {
+		method OPTIONS
+	}
+	handle @options {
+		respond "" 204
+	}
+
+	# Request body size limit (10MB for contract bytecode deployment and batch RPC)
+	request_body {
+		max_size 10MB
+	}
+
+	# Proxy to Validator Node 1 JSON-RPC
+	reverse_proxy node1:8545 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+}

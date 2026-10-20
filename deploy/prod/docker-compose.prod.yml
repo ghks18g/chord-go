@@ -1,0 +1,299 @@
+name: chord-production
+
+services:
+  # ----------------------------------------------------
+  # 1. 4-Node CometBFT Consensus Network (Round-Robin)
+  # ----------------------------------------------------
+  node1:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile
+      args:
+        TARGETARCH: amd64
+    container_name: chord-node1
+    command: ["--port=8545", "--val-id=1"]
+    volumes:
+      - chord-node1-data:/root/.chord
+    ports:
+      - "127.0.0.1:8545:8545"
+    restart: unless-stopped
+    networks:
+      - chord-prod-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  node2:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile
+      args:
+        TARGETARCH: amd64
+    container_name: chord-node2
+    command: ["--port=8545", "--val-id=2"]
+    volumes:
+      - chord-node2-data:/root/.chord
+    restart: unless-stopped
+    networks:
+      - chord-prod-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  node3:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile
+      args:
+        TARGETARCH: amd64
+    container_name: chord-node3
+    command: ["--port=8545", "--val-id=3"]
+    volumes:
+      - chord-node3-data:/root/.chord
+    restart: unless-stopped
+    networks:
+      - chord-prod-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  node4:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile
+      args:
+        TARGETARCH: amd64
+    container_name: chord-node4
+    command: ["--port=8545", "--val-id=4"]
+    volumes:
+      - chord-node4-data:/root/.chord
+    restart: unless-stopped
+    networks:
+      - chord-prod-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ----------------------------------------------------
+  # 2. ChordScan Persistence Database (PostgreSQL 17)
+  # ----------------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    container_name: chord-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DATABASE_USER:-chord}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-chordpass}
+      POSTGRES_DB: ${DATABASE_NAME:-chordscan}
+    volumes:
+      - chord-pgdata:/var/lib/postgresql/data
+    networks:
+      - chord-prod-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ----------------------------------------------------
+  # 2.1. Chord Distributed In-Memory Engine (Redis 7)
+  # ----------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: chord-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - chord-redis-data:/data
+    networks:
+      - chord-prod-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ----------------------------------------------------
+  # 3. ChordScan API & WebSocket Gateway (Producer)
+  # ----------------------------------------------------
+  scan-api:
+    build:
+      context: ../../../chordscan
+      dockerfile: docker/Dockerfile.scan-api
+    container_name: chordscan-scan-api
+    restart: unless-stopped
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: ${DATABASE_USER:-chord}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-chordpass}
+      DATABASE_NAME: ${DATABASE_NAME:-chordscan}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CHORD_RPC_URL: http://node1:8545
+      PORT: 3002
+    depends_on:
+      - postgres
+      - redis
+      - node1
+    networks:
+      - chord-prod-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ----------------------------------------------------
+  # 4. ChordScan Realtime Indexer Engine (L1 RPC Ingest)
+  # ----------------------------------------------------
+  indexer-api:
+    build:
+      context: ../../../chordscan
+      dockerfile: docker/Dockerfile.indexer
+    container_name: chordscan-indexer-api
+    restart: unless-stopped
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: ${DATABASE_USER:-chord}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-chordpass}
+      DATABASE_NAME: ${DATABASE_NAME:-chordscan}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CHORD_RPC_URL: http://node1:8545
+      PORT: 3003
+    depends_on:
+      - postgres
+      - redis
+      - node1
+    networks:
+      - chord-prod-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ----------------------------------------------------
+  # 5. ChordScan EIP-2771 Gas Relayer Worker (Consumer)
+  # ----------------------------------------------------
+  gas-relayer:
+    build:
+      context: ../../../chordscan
+      dockerfile: docker/Dockerfile.gas-relayer
+    container_name: chordscan-gas-relayer
+    restart: unless-stopped
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CHORD_RPC_URL: http://node1:8545
+      PORT: 3004
+    depends_on:
+      - redis
+      - node1
+    networks:
+      - chord-prod-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ----------------------------------------------------
+  # 6. ChordScan Contract Verifier Worker (Consumer)
+  # ----------------------------------------------------
+  contract-verifier:
+    build:
+      context: ../../../chordscan
+      dockerfile: docker/Dockerfile.contract-verifier
+    container_name: chordscan-contract-verifier
+    restart: unless-stopped
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: ${DATABASE_USER:-chord}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-chordpass}
+      DATABASE_NAME: ${DATABASE_NAME:-chordscan}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CHORD_RPC_URL: http://node1:8545
+      PORT: 3005
+    depends_on:
+      - postgres
+      - redis
+      - node1
+    networks:
+      - chord-prod-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ----------------------------------------------------
+  # 7. ChordScan Web Explorer UI (Next.js 15)
+  # ----------------------------------------------------
+  web:
+    build:
+      context: ../../../chordscan
+      dockerfile: docker/Dockerfile.web
+    container_name: chordscan-web
+    restart: unless-stopped
+    environment:
+      INDEXER_API_URL: http://scan-api:3002
+      CHORD_RPC_URL: http://node1:8545
+      CHORD_CORE_RPC_URL: http://node1:8545
+      NEXT_PUBLIC_RPC_URL: https://rpc.chordchain.space
+      NEXT_PUBLIC_EXPLORER_URL: https://scan.chordchain.space
+      PORT: 3000
+    depends_on:
+      - scan-api
+    networks:
+      - chord-prod-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ----------------------------------------------------
+  # 5. Caddy Reverse Proxy (Managed by host caddy freddie-forge-prod-caddy-1)
+  # ----------------------------------------------------
+  # caddy:
+  #   image: caddy:2.10-alpine
+  #   container_name: chord-caddy
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #     - "443:443/udp"
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - chord-caddy-data:/data
+  #     - chord-caddy-config:/config
+  #   depends_on:
+  #     - web
+  #     - node1
+  #   networks:
+  #     - chord-prod-net
+
+volumes:
+  chord-node1-data:
+  chord-node2-data:
+  chord-node3-data:
+  chord-node4-data:
+  chord-pgdata:
+  chord-redis-data:
+
+networks:
+  chord-prod-net:
+    driver: bridge

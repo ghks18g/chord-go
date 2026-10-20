@@ -1,0 +1,53 @@
+{
+  "comment": "CHORD L1 4-Validator Keypairs & Node Configuration",
+  "validators": [
+    {
+      "id": 1,
+      "name": "CHORD Validator 1 (Gateway Proposer)",
+      "role": "Leader / Proposer",
+      "address": "0xa983D897D00482FEEf3000Ad2BEEf358B9fA06bC",
+      "pubKey": "0x04a4278195df5d0b7524f1ec2ee69278cf990d96e311edaf085218167646e28d5d652607a039874b1caa6ba7604c823c5c40ecd17d967f8940bd51890b838d581f",
+      "privKey": "0x2031945fdabcf4ca1709e35d4a57dc057d86e48eab7b96f60442e7f5d67a5649",
+      "votingPower": 2500,
+      "votingPercent": "25.0%",
+      "weight": 0.25,
+      "stakingCHOR": "25000000"
+    },
+    {
+      "id": 2,
+      "name": "CHORD Validator 2 (Private BFT Peer)",
+      "role": "Consensus Peer",
+      "address": "0xAeA7958f66EEdCc146a988b11eb0268F68E5B9DF",
+      "pubKey": "0x043aae3d85a80de6d8fb550dc45db3196fcc1fbbe15e8f394bd4ec0cf75425c8821eb8ba94ed34b87a09482103170474a268b796dcdbe3db30c8c24916c531dd96",
+      "privKey": "0x12cb8dcd9b3b806dbbeb91eec0f5bc2ee9035a2965086c4afe2d3e486865527b",
+      "votingPower": 2500,
+      "votingPercent": "25.0%",
+      "weight": 0.25,
+      "stakingCHOR": "25000000"
+    },
+    {
+      "id": 3,
+      "name": "CHORD Validator 3 (Private BFT Peer)",
+      "role": "Consensus Peer",
+      "address": "0x4980B80169F964EecE5EDe078B53f207Afd0b921",
+      "pubKey": "0x0413d6c3027ab2646025a16323b5879cb5401662e2b218cfffbd88ff7222d8bcc8031c1825ffdf449879e21fc0059ca6c0b6d76d3b2da48e470ba13ca952c7791e",
+      "privKey": "0x9eebf967ca0f06a71f182d89ff68d4c84757a8674028b9a1704b1ccca4c4d6ee",
+      "votingPower": 2500,
+      "votingPercent": "25.0%",
+      "weight": 0.25,
+      "stakingCHOR": "25000000"
+    },
+    {
+      "id": 4,
+      "name": "CHORD Validator 4 (Private BFT Peer)",
+      "role": "Consensus Peer",
+      "address": "0x483A0b4F5Db0C6ac6a7F67deE01494D45E266d18",
+      "pubKey": "0x04ef3d90d128bef66c2306b987c106bf113803e764e988b0b68c6c8561de68ea523d1149750e76bcd06ef7d9768b6f87541bef20bf18c3a3b58fd5028ded5754db",
+      "privKey": "0x8d3a722b14164d45be8294e4b38a62150ef91cb70b019f34bcde21188134724d",
+      "votingPower": 2500,
+      "votingPercent": "25.0%",
+      "weight": 0.25,
+      "stakingCHOR": "25000000"
+    }
+  ]
+}
