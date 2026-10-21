@@ -2,10 +2,10 @@ package app
 
 import (
 	"bytes"
-	"encoding/hex"
 	"errors"
 	"sync"
 
+	"github.com/ghks18g/chord-go/pkg/app/hooks"
 	"github.com/ghks18g/chord-go/pkg/crypto/signature"
 	"github.com/ghks18g/chord-go/pkg/store/smt"
 	"github.com/ghks18g/chord-go/pkg/types"
@@ -39,6 +39,13 @@ func (a *App) StateRoot() [32]byte {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.stateRoot
+}
+
+// StateDB returns the EVM state database.
+func (a *App) StateDB() *vm.MemoryStateDB {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.state
 }
 
 // Height returns current block height.
@@ -149,6 +156,8 @@ func (a *App) ExecuteTransaction(tx *types.Transaction) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	a.state.ClearLogs()
+
 	// Verify Sender Balance
 	bal := a.state.GetBalance(tx.From)
 	if bal.Lt(tx.Value) {
@@ -179,56 +188,29 @@ func (a *App) ExecuteTransaction(tx *types.Transaction) error {
 		a.state.AddBalance(*tx.To, tx.Value)
 	}
 
-	// ChordFaucet claim & request handler: transfer 10 CHOR from Faucet to recipient
-	faucetAddr, err := types.HexToAddress("0x4c219b464eb113f4d3c7ce0a438fb2e99f6b07b6")
-	forwarderAddr, errF := types.HexToAddress("0x34ec2b8950c43c126d8e7f57dd67d3f134ea1933")
-	if err == nil && tx.To != nil && len(tx.Data) >= 4 {
-		claimAmount := uint256.NewInt(10000000000000000000) // 10 CHOR
-		var recipient types.Address
-		isClaimOrRequest := false
+	// Execute system hooks (Faucet claim/request, EIP-2771 forwarder)
+	_ = hooks.HandleFaucetAndForwarder(a.state, a.tree, tx)
 
-		if *tx.To == faucetAddr {
-			selector := hex.EncodeToString(tx.Data[:4])
-			if selector == "4e71d92d" { // claim()
-				recipient = tx.From
-				// EIP-2771: if forwarded, original sender is appended to the last 20 bytes of calldata
-				if len(tx.Data) >= 24 {
-					copy(recipient[:], tx.Data[len(tx.Data)-20:])
+	// Execute EVM bytecode or Precompile if destination is a contract
+	if tx.To != nil {
+		if precompile, isPre := vm.PrecompiledContracts[*tx.To]; isPre {
+			if _, err := precompile.Run(tx.Data); err != nil {
+				return err
+			}
+		} else {
+			code := a.state.GetCode(*tx.To)
+			if len(code) > 0 {
+				evm := vm.NewEVM(a.state, vm.Context{
+					Caller:      tx.From,
+					To:          *tx.To,
+					Origin:      tx.From,
+					BlockNumber: int64(a.height),
+					Value:       tx.Value,
+				})
+				gasLimit := uint64(10_000_000)
+				if _, _, err := evm.Execute(code, tx.Data, gasLimit); err != nil {
+					return err
 				}
-				isClaimOrRequest = true
-			} else if selector == "27c78c42" && len(tx.Data) >= 36 { // request(address _recipient)
-				copy(recipient[:], tx.Data[16:36])
-				isClaimOrRequest = true
-			}
-		} else if errF == nil && *tx.To == forwarderAddr {
-			// ChordForwarder.execute((from, to, value, gas, nonce, deadline, data), signature)
-			// req.from is located at calldata byte offset 80..100
-			if len(tx.Data) >= 100 {
-				copy(recipient[:], tx.Data[80:100])
-				isClaimOrRequest = true
-			}
-		}
-
-		if isClaimOrRequest && !a.state.GetBalance(faucetAddr).Lt(claimAmount) {
-			a.state.SubBalance(faucetAddr, claimAmount)
-			a.state.AddBalance(recipient, claimAmount)
-
-			// Update Faucet leaf node in SMT
-			var fKey [32]byte
-			copy(fKey[12:], faucetAddr[:])
-			fBalBytes := a.state.GetBalance(faucetAddr).Bytes()
-			var fVal [32]byte
-			copy(fVal[32-len(fBalBytes):], fBalBytes)
-			a.tree.Update(fKey, fVal)
-
-			// If recipient is different from tx.From (EIP-2771 meta-tx or request), update recipient leaf node in SMT
-			if recipient != tx.From {
-				var rKey [32]byte
-				copy(rKey[12:], recipient[:])
-				rBalBytes := a.state.GetBalance(recipient).Bytes()
-				var rVal [32]byte
-				copy(rVal[32-len(rBalBytes):], rBalBytes)
-				a.tree.Update(rKey, rVal)
 			}
 		}
 	}

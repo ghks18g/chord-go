@@ -70,8 +70,20 @@ const (
 	SWAP2  OpCode = 0x91
 	SWAP16 OpCode = 0x9f
 
-	RETURN OpCode = 0xf3
-	REVERT OpCode = 0xfd
+	RETURNDATASIZE OpCode = 0x3d
+	RETURNDATACOPY OpCode = 0x3e
+
+	LOG0 OpCode = 0xa0
+	LOG1 OpCode = 0xa1
+	LOG2 OpCode = 0xa2
+	LOG3 OpCode = 0xa3
+	LOG4 OpCode = 0xa4
+
+	CALL         OpCode = 0xf1
+	RETURN       OpCode = 0xf3
+	DELEGATECALL OpCode = 0xf4
+	STATICCALL   OpCode = 0xfa
+	REVERT       OpCode = 0xfd
 )
 
 // Gas costs
@@ -86,6 +98,10 @@ const (
 	GasSStore   uint64 = 100
 	GasSLoad    uint64 = 50
 	GasKeccak   uint64 = 30
+	GasLog      uint64 = 375
+	GasLogTopic uint64 = 375
+	GasLogData  uint64 = 8
+	GasCall     uint64 = 100
 )
 
 // String returns the human readable opcode name.
@@ -173,6 +189,26 @@ func (op OpCode) String() string {
 		return "GAS"
 	case JUMPDEST:
 		return "JUMPDEST"
+	case RETURNDATASIZE:
+		return "RETURNDATASIZE"
+	case RETURNDATACOPY:
+		return "RETURNDATACOPY"
+	case LOG0:
+		return "LOG0"
+	case LOG1:
+		return "LOG1"
+	case LOG2:
+		return "LOG2"
+	case LOG3:
+		return "LOG3"
+	case LOG4:
+		return "LOG4"
+	case CALL:
+		return "CALL"
+	case DELEGATECALL:
+		return "DELEGATECALL"
+	case STATICCALL:
+		return "STATICCALL"
 	case RETURN:
 		return "RETURN"
 	case REVERT:

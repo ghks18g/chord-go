@@ -16,6 +16,9 @@ var (
 	ErrInvalidJump         = errors.New("invalid jump destination")
 	ErrExecutionReverted   = errors.New("execution reverted")
 	ErrInvalidCode         = errors.New("invalid bytecode")
+	ErrDepth               = errors.New("max call depth exceeded")
+	ErrWriteProtection     = errors.New("write protection")
+	ErrInsufficientBalance = errors.New("insufficient balance")
 )
 
 // Context provides environment data for EVM execution.
@@ -31,8 +34,11 @@ type Context struct {
 
 // EVM is the core execution machine.
 type EVM struct {
-	StateDB StateDB
-	Context Context
+	StateDB    StateDB
+	Context    Context
+	depth      int
+	isStatic   bool
+	returnData []byte
 }
 
 // NewEVM creates a new EVM instance.
@@ -44,8 +50,10 @@ func NewEVM(stateDB StateDB, ctx Context) *EVM {
 		ctx.Value = uint256.NewInt(0)
 	}
 	return &EVM{
-		StateDB: stateDB,
-		Context: ctx,
+		StateDB:  stateDB,
+		Context:  ctx,
+		depth:    0,
+		isStatic: false,
 	}
 }
 
@@ -101,6 +109,12 @@ func (evm *EVM) Execute(code []byte, input []byte, gas uint64) (returnData []byt
 			gasCost = GasJumpDest
 		case op == SHA3:
 			gasCost = GasKeccak
+		case op == CALL || op == STATICCALL || op == DELEGATECALL:
+			gasCost = GasCall
+		case op == RETURNDATASIZE || op == RETURNDATACOPY:
+			gasCost = GasVeryLow
+		case op >= LOG0 && op <= LOG4:
+			gasCost = GasZero // dynamic gas computed in opcode handler
 		}
 
 		if gasLeft < gasCost {
@@ -519,6 +533,9 @@ func (evm *EVM) Execute(code []byte, input []byte, gas uint64) (returnData []byt
 			pc++
 
 		case SSTORE:
+			if evm.isStatic {
+				return nil, gasLeft, ErrWriteProtection
+			}
 			keyInt, err := stack.Pop()
 			if err != nil {
 				return nil, gasLeft, err
@@ -614,6 +631,289 @@ func (evm *EVM) Execute(code []byte, input []byte, gas uint64) (returnData []byt
 			}
 			ret := memory.GetCopy(offset.Uint64(), size.Uint64())
 			return ret, gasLeft, ErrExecutionReverted
+
+		case RETURNDATASIZE:
+			res := uint256.NewInt(uint64(len(evm.returnData)))
+			if err := stack.Push(res); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case RETURNDATACOPY:
+			memOff, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			dataOff, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			length, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			mOff := memOff.Uint64()
+			dOff := dataOff.Uint64()
+			l := length.Uint64()
+			buf := make([]byte, l)
+			if dOff < uint64(len(evm.returnData)) {
+				copy(buf, evm.returnData[dOff:])
+			}
+			memory.Set(mOff, l, buf)
+			pc++
+
+		case LOG0, LOG1, LOG2, LOG3, LOG4:
+			if evm.isStatic {
+				return nil, gasLeft, ErrWriteProtection
+			}
+			nTopics := int(op - LOG0)
+			memOff, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			memSize, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+
+			offset := memOff.Uint64()
+			size := memSize.Uint64()
+
+			logGas := GasLog + GasLogTopic*uint64(nTopics) + GasLogData*size
+			if gasLeft < logGas {
+				return nil, 0, ErrOutOfGas
+			}
+			gasLeft -= logGas
+
+			topics := make([]types.Hash, nTopics)
+			for i := 0; i < nTopics; i++ {
+				top, err := stack.Pop()
+				if err != nil {
+					return nil, gasLeft, err
+				}
+				b := top.Bytes32()
+				copy(topics[i][:], b[:])
+			}
+
+			data := memory.GetCopy(offset, size)
+
+			if evm.StateDB != nil {
+				evm.StateDB.AddLog(&types.Log{
+					Address:     evm.Context.To,
+					Topics:      topics,
+					Data:        data,
+					BlockNumber: uint64(evm.Context.BlockNumber),
+				})
+			}
+			pc++
+
+		case CALL, STATICCALL, DELEGATECALL:
+			gasVal, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			toVal, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+
+			var val *uint256.Int
+			if op == CALL {
+				val, err = stack.Pop()
+				if err != nil {
+					return nil, gasLeft, err
+				}
+			} else if op == STATICCALL {
+				val = uint256.NewInt(0)
+			} else { // DELEGATECALL
+				val = evm.Context.Value
+			}
+
+			inOffVal, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			inSizeVal, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			outOffVal, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			outSizeVal, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+
+			b := toVal.Bytes32()
+			toAddr := types.BytesToAddress(b[12:])
+			inOff := inOffVal.Uint64()
+			inSize := inSizeVal.Uint64()
+			outOff := outOffVal.Uint64()
+			outSize := outSizeVal.Uint64()
+
+			// Call depth limit
+			if evm.depth >= 1024 {
+				if err := stack.Push(uint256.NewInt(0)); err != nil {
+					return nil, gasLeft, err
+				}
+				pc++
+				continue
+			}
+
+			// STATICCALL write protection: cannot transfer value
+			if evm.isStatic && op == CALL && !val.IsZero() {
+				return nil, gasLeft, ErrWriteProtection
+			}
+
+			callGas := gasVal.Uint64()
+			if callGas > gasLeft {
+				callGas = gasLeft
+			}
+			gasLeft -= callGas
+
+			var snap int
+			if evm.StateDB != nil {
+				snap = evm.StateDB.Snapshot()
+			}
+
+			// Value transfer for CALL
+			if op == CALL && !val.IsZero() {
+				if evm.StateDB == nil || evm.StateDB.GetBalance(evm.Context.To).Lt(val) {
+					if evm.StateDB != nil {
+						evm.StateDB.RevertToSnapshot(snap)
+					}
+					gasLeft += callGas
+					if err := stack.Push(uint256.NewInt(0)); err != nil {
+						return nil, gasLeft, err
+					}
+					pc++
+					continue
+				}
+				evm.StateDB.SubBalance(evm.Context.To, val)
+				evm.StateDB.AddBalance(toAddr, val)
+			}
+
+			input := memory.GetCopy(inOff, inSize)
+
+			var ret []byte
+			var subErr error
+			var subGasLeft uint64
+
+			// Route Precompiled Contracts
+			if precompile, isPrecompile := PrecompiledContracts[toAddr]; isPrecompile {
+				reqGas := precompile.RequiredGas(input)
+				if callGas < reqGas {
+					if evm.StateDB != nil {
+						evm.StateDB.RevertToSnapshot(snap)
+					}
+					evm.returnData = nil
+					if err := stack.Push(uint256.NewInt(0)); err != nil {
+						return nil, gasLeft, err
+					}
+					pc++
+					continue
+				}
+				callGas -= reqGas
+				subGasLeft = callGas
+				ret, subErr = precompile.Run(input)
+			} else {
+				var code []byte
+				if evm.StateDB != nil {
+					code = evm.StateDB.GetCode(toAddr)
+				}
+
+				if len(code) == 0 {
+					subGasLeft = callGas
+					ret = []byte{}
+					subErr = nil
+				} else {
+					var subCtx Context
+					var subStatic bool
+
+					switch op {
+					case CALL:
+						subCtx = Context{
+							Caller:      evm.Context.To,
+							To:          toAddr,
+							Origin:      evm.Context.Origin,
+							BlockNumber: evm.Context.BlockNumber,
+							Time:        evm.Context.Time,
+							GasPrice:    evm.Context.GasPrice,
+							Value:       val,
+						}
+						subStatic = evm.isStatic
+
+					case STATICCALL:
+						subCtx = Context{
+							Caller:      evm.Context.To,
+							To:          toAddr,
+							Origin:      evm.Context.Origin,
+							BlockNumber: evm.Context.BlockNumber,
+							Time:        evm.Context.Time,
+							GasPrice:    evm.Context.GasPrice,
+							Value:       uint256.NewInt(0),
+						}
+						subStatic = true
+
+					case DELEGATECALL:
+						subCtx = Context{
+							Caller:      evm.Context.Caller,
+							To:          evm.Context.To,
+							Origin:      evm.Context.Origin,
+							BlockNumber: evm.Context.BlockNumber,
+							Time:        evm.Context.Time,
+							GasPrice:    evm.Context.GasPrice,
+							Value:       evm.Context.Value,
+						}
+						subStatic = evm.isStatic
+					}
+
+					subEVM := &EVM{
+						StateDB:  evm.StateDB,
+						Context:  subCtx,
+						depth:    evm.depth + 1,
+						isStatic: subStatic,
+					}
+					ret, subGasLeft, subErr = subEVM.Execute(code, input, callGas)
+				}
+			}
+
+			evm.returnData = ret
+			gasLeft += subGasLeft
+
+			if subErr != nil {
+				if evm.StateDB != nil {
+					evm.StateDB.RevertToSnapshot(snap)
+				}
+				if errors.Is(subErr, ErrExecutionReverted) && outSize > 0 {
+					toCopy := outSize
+					if uint64(len(ret)) < toCopy {
+						toCopy = uint64(len(ret))
+					}
+					zeroBuf := make([]byte, outSize)
+					copy(zeroBuf, ret[:toCopy])
+					memory.Set(outOff, outSize, zeroBuf)
+				}
+				if err := stack.Push(uint256.NewInt(0)); err != nil {
+					return nil, gasLeft, err
+				}
+			} else {
+				if outSize > 0 {
+					toCopy := outSize
+					if uint64(len(ret)) < toCopy {
+						toCopy = uint64(len(ret))
+					}
+					zeroBuf := make([]byte, outSize)
+					copy(zeroBuf, ret[:toCopy])
+					memory.Set(outOff, outSize, zeroBuf)
+				}
+				if err := stack.Push(uint256.NewInt(1)); err != nil {
+					return nil, gasLeft, err
+				}
+			}
+			pc++
 
 		default:
 			// PUSH1 to PUSH32

@@ -95,7 +95,27 @@ func HexToAddress(s string) (Address, error) {
 	return a, nil
 }
 
-// Transaction represents an on-chain transaction.
+func HexToAddressMust(s string) Address {
+	addr, err := HexToAddress(s)
+	if err != nil {
+		panic(err)
+	}
+	return addr
+}
+
+// Log represents a contract log event.
+type Log struct {
+	Address     Address `json:"address"`
+	Topics      []Hash  `json:"topics"`
+	Data        []byte  `json:"data"`
+	BlockNumber uint64  `json:"blockNumber"`
+	TxHash      Hash    `json:"transactionHash,omitempty"`
+	TxIndex     uint    `json:"transactionIndex,omitempty"`
+	BlockHash   Hash    `json:"blockHash,omitempty"`
+	Index       uint    `json:"logIndex,omitempty"`
+	Removed     bool    `json:"removed,omitempty"`
+}
+
 type Transaction struct {
 	Nonce     uint64          `json:"nonce"`
 	From      Address         `json:"from"`

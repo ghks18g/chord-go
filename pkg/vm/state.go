@@ -20,23 +20,47 @@ type StateDB interface {
 	SetState(addr types.Address, key types.Hash, value types.Hash)
 	Exist(addr types.Address) bool
 	CreateAccount(addr types.Address)
+
+	// Rollback support (Snapshot & Revert)
+	Snapshot() int
+	RevertToSnapshot(id int)
+
+	// Log buffering support
+	AddLog(log *types.Log)
+	GetLogs() []*types.Log
+	ClearLogs()
 }
 
-// MemoryStateDB is an in-memory implementation of StateDB for testing.
-type MemoryStateDB struct {
+type snapshot struct {
+	id       int
 	balances map[types.Address]*uint256.Int
 	nonces   map[types.Address]uint64
 	codes    map[types.Address][]byte
 	storage  map[types.Address]map[types.Hash]types.Hash
+	logLen   int
+}
+
+// MemoryStateDB is an in-memory implementation of StateDB for testing.
+type MemoryStateDB struct {
+	balances   map[types.Address]*uint256.Int
+	nonces     map[types.Address]uint64
+	codes      map[types.Address][]byte
+	storage    map[types.Address]map[types.Hash]types.Hash
+	logs       []*types.Log
+	snapshots  []snapshot
+	nextSnapID int
 }
 
 // NewMemoryStateDB creates an empty in-memory state DB.
 func NewMemoryStateDB() *MemoryStateDB {
 	return &MemoryStateDB{
-		balances: make(map[types.Address]*uint256.Int),
-		nonces:   make(map[types.Address]uint64),
-		codes:    make(map[types.Address][]byte),
-		storage:  make(map[types.Address]map[types.Hash]types.Hash),
+		balances:   make(map[types.Address]*uint256.Int),
+		nonces:     make(map[types.Address]uint64),
+		codes:      make(map[types.Address][]byte),
+		storage:    make(map[types.Address]map[types.Hash]types.Hash),
+		logs:       make([]*types.Log, 0),
+		snapshots:  make([]snapshot, 0),
+		nextSnapID: 1,
 	}
 }
 
@@ -113,3 +137,91 @@ func (m *MemoryStateDB) SetState(addr types.Address, key types.Hash, value types
 	}
 	m.storage[addr][key] = value
 }
+
+// Snapshot creates a state snapshot and returns its identifier.
+func (m *MemoryStateDB) Snapshot() int {
+	id := m.nextSnapID
+	m.nextSnapID++
+
+	snapBalances := make(map[types.Address]*uint256.Int, len(m.balances))
+	for k, v := range m.balances {
+		if v != nil {
+			snapBalances[k] = v.Clone()
+		}
+	}
+
+	snapNonces := make(map[types.Address]uint64, len(m.nonces))
+	for k, v := range m.nonces {
+		snapNonces[k] = v
+	}
+
+	snapCodes := make(map[types.Address][]byte, len(m.codes))
+	for k, v := range m.codes {
+		codeCopy := make([]byte, len(v))
+		copy(codeCopy, v)
+		snapCodes[k] = codeCopy
+	}
+
+	snapStorage := make(map[types.Address]map[types.Hash]types.Hash, len(m.storage))
+	for addr, sMap := range m.storage {
+		inner := make(map[types.Hash]types.Hash, len(sMap))
+		for k, v := range sMap {
+			inner[k] = v
+		}
+		snapStorage[addr] = inner
+	}
+
+	m.snapshots = append(m.snapshots, snapshot{
+		id:       id,
+		balances: snapBalances,
+		nonces:   snapNonces,
+		codes:    snapCodes,
+		storage:  snapStorage,
+		logLen:   len(m.logs),
+	})
+
+	return id
+}
+
+// RevertToSnapshot rolls back the state to the given snapshot identifier.
+func (m *MemoryStateDB) RevertToSnapshot(id int) {
+	idx := -1
+	for i := len(m.snapshots) - 1; i >= 0; i-- {
+		if m.snapshots[i].id == id {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return
+	}
+
+	snap := m.snapshots[idx]
+	m.balances = snap.balances
+	m.nonces = snap.nonces
+	m.codes = snap.codes
+	m.storage = snap.storage
+	if snap.logLen <= len(m.logs) {
+		m.logs = m.logs[:snap.logLen]
+	}
+
+	m.snapshots = m.snapshots[:idx]
+}
+
+// AddLog appends a log entry to the buffer.
+func (m *MemoryStateDB) AddLog(log *types.Log) {
+	m.logs = append(m.logs, log)
+}
+
+// GetLogs returns all buffered log entries.
+func (m *MemoryStateDB) GetLogs() []*types.Log {
+	res := make([]*types.Log, len(m.logs))
+	copy(res, m.logs)
+	return res
+}
+
+// ClearLogs clears the buffered log entries.
+func (m *MemoryStateDB) ClearLogs() {
+	m.logs = make([]*types.Log, 0)
+}
+
