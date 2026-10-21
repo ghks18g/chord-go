@@ -76,6 +76,7 @@ type Server struct {
 	receipts     map[string]*TxReceipt
 	txs          map[string]*RPCTransaction
 	blocksByHash map[string]*types.Block
+	dataDir      string
 }
 
 func NewServer(application *app.App, engine *bft.Engine) *Server {
@@ -529,6 +530,7 @@ func (s *Server) executeRPCRequest(req *JSONRPCRequest) JSONRPCResponse {
 					s.txs[rawTxHashStr] = rpcTx
 				}
 				s.mu.Unlock()
+				go func() { _ = s.Persist() }()
 			} else {
 				// 2. Regular Transfer or Contract Call
 				to, _ := types.HexToAddress(toStr)
@@ -636,6 +638,7 @@ func (s *Server) executeRPCRequest(req *JSONRPCRequest) JSONRPCResponse {
 					s.txs[rawTxHashStr] = rpcTx
 				}
 				s.mu.Unlock()
+				go func() { _ = s.Persist() }()
 			}
 
 			if rawTxHashStr != "" {

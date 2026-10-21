@@ -91,6 +91,8 @@ func (evm *EVM) Execute(code []byte, input []byte, gas uint64) (returnData []byt
 			gasCost = GasLow
 		case op >= PUSH1 && op <= PUSH32:
 			gasCost = GasVeryLow
+		case op == PUSH0:
+			gasCost = GasBase
 		case op >= DUP1 && op <= DUP16:
 			gasCost = GasVeryLow
 		case op >= SWAP1 && op <= SWAP16:
@@ -912,6 +914,12 @@ func (evm *EVM) Execute(code []byte, input []byte, gas uint64) (returnData []byt
 				if err := stack.Push(uint256.NewInt(1)); err != nil {
 					return nil, gasLeft, err
 				}
+			}
+			pc++
+
+		case PUSH0:
+			if err := stack.Push(uint256.NewInt(0)); err != nil {
+				return nil, gasLeft, err
 			}
 			pc++
 

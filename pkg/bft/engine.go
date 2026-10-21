@@ -169,3 +169,30 @@ func (e *Engine) PruneBlocks(retainHeight uint64) int {
 }
 
 var ErrNoTransactionsToCommit = errors.New("mempool empty and create_empty_blocks is false")
+
+// ExportBlocks returns all stored blocks.
+func (e *Engine) ExportBlocks() []*types.Block {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]*types.Block, 0, len(e.blocks))
+	for _, b := range e.blocks {
+		out = append(out, b)
+	}
+	return out
+}
+
+// RestoreBlocks restores blocks and advances engine height.
+func (e *Engine) RestoreBlocks(blocks []*types.Block) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, b := range blocks {
+		if b == nil {
+			continue
+		}
+		e.blocks[b.Header.Height] = b
+		if b.Header.Height > e.currentHeight {
+			e.currentHeight = b.Header.Height
+			e.lastBlockHash = b.Hash()
+		}
+	}
+}

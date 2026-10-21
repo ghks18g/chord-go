@@ -129,10 +129,13 @@ func (a *App) DeployContract(from types.Address, code []byte, value *uint256.Int
 	var contractAddr types.Address
 	copy(contractAddr[:], hash[12:])
 
+	snapshot := a.state.Snapshot()
+
 	// Deduct balance if value > 0
 	if value != nil && !value.IsZero() {
 		bal := a.state.GetBalance(from)
 		if bal.Lt(value) {
+			a.state.RevertToSnapshot(snapshot)
 			return types.Address{}, errors.New("insufficient balance for deployment")
 		}
 		a.state.SubBalance(from, value)
@@ -158,10 +161,18 @@ func (a *App) ExecuteTransaction(tx *types.Transaction) error {
 
 	a.state.ClearLogs()
 
+	// Snapshot state for atomic rollback on any failure
+	snapshot := a.state.Snapshot()
+	rollback := func(err error) error {
+		a.state.RevertToSnapshot(snapshot)
+		a.state.ClearLogs()
+		return err
+	}
+
 	// Verify Sender Balance
 	bal := a.state.GetBalance(tx.From)
 	if bal.Lt(tx.Value) {
-		return errors.New("insufficient balance")
+		return rollback(errors.New("insufficient balance"))
 	}
 
 	// Signature verification logic
@@ -174,11 +185,11 @@ func (a *App) ExecuteTransaction(tx *types.Transaction) error {
 		structHash := signature.Keccak256(tx.Data)
 		typedHash := signature.HashTypedData(domain, structHash)
 		if typedHash == [32]byte{} {
-			return errors.New("invalid typed data hash")
+			return rollback(errors.New("invalid typed data hash"))
 		}
 	} else if tx.TxType == 2 { // EIP-1271 / ZK Payload
 		if len(tx.ZKProof) == 0 {
-			return errors.New("missing zk proof payload")
+			return rollback(errors.New("missing zk proof payload"))
 		}
 	}
 
@@ -195,7 +206,7 @@ func (a *App) ExecuteTransaction(tx *types.Transaction) error {
 	if tx.To != nil {
 		if precompile, isPre := vm.PrecompiledContracts[*tx.To]; isPre {
 			if _, err := precompile.Run(tx.Data); err != nil {
-				return err
+				return rollback(err)
 			}
 		} else {
 			code := a.state.GetCode(*tx.To)
@@ -209,7 +220,7 @@ func (a *App) ExecuteTransaction(tx *types.Transaction) error {
 				})
 				gasLimit := uint64(10_000_000)
 				if _, _, err := evm.Execute(code, tx.Data, gasLimit); err != nil {
-					return err
+					return rollback(err)
 				}
 			}
 		}

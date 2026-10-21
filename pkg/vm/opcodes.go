@@ -55,6 +55,7 @@ const (
 	MSIZE    OpCode = 0x59
 	GAS      OpCode = 0x5a
 	JUMPDEST OpCode = 0x5b
+	PUSH0    OpCode = 0x5f
 
 	PUSH1  OpCode = 0x60
 	PUSH2  OpCode = 0x61
@@ -189,6 +190,8 @@ func (op OpCode) String() string {
 		return "GAS"
 	case JUMPDEST:
 		return "JUMPDEST"
+	case PUSH0:
+		return "PUSH0"
 	case RETURNDATASIZE:
 		return "RETURNDATASIZE"
 	case RETURNDATACOPY:

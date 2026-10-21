@@ -1,6 +1,8 @@
 package vm
 
 import (
+	"encoding/hex"
+
 	"github.com/ghks18g/chord-go/pkg/types"
 
 	"github.com/holiman/uint256"
@@ -224,4 +226,85 @@ func (m *MemoryStateDB) GetLogs() []*types.Log {
 func (m *MemoryStateDB) ClearLogs() {
 	m.logs = make([]*types.Log, 0)
 }
+
+// ExportedAccount represents persistent account state.
+type ExportedAccount struct {
+	Balance string            `json:"balance"`
+	Nonce   uint64            `json:"nonce"`
+	Code    string            `json:"code,omitempty"`
+	Storage map[string]string `json:"storage,omitempty"`
+}
+
+// ExportState dumps all non-empty accounts in MemoryStateDB.
+func (m *MemoryStateDB) ExportState() map[string]ExportedAccount {
+	out := make(map[string]ExportedAccount)
+	allAddrs := make(map[types.Address]bool)
+
+	for addr := range m.balances {
+		allAddrs[addr] = true
+	}
+	for addr := range m.nonces {
+		allAddrs[addr] = true
+	}
+	for addr := range m.codes {
+		allAddrs[addr] = true
+	}
+	for addr := range m.storage {
+		allAddrs[addr] = true
+	}
+
+	for addr := range allAddrs {
+		acc := ExportedAccount{
+			Balance: "0",
+			Nonce:   m.nonces[addr],
+		}
+		if bal, ok := m.balances[addr]; ok && bal != nil {
+			acc.Balance = bal.Dec()
+		}
+		if code, ok := m.codes[addr]; ok && len(code) > 0 {
+			acc.Code = hex.EncodeToString(code)
+		}
+		if st, ok := m.storage[addr]; ok && len(st) > 0 {
+			acc.Storage = make(map[string]string)
+			for k, v := range st {
+				acc.Storage[k.Hex()] = v.Hex()
+			}
+		}
+		out[addr.String()] = acc
+	}
+	return out
+}
+
+// ImportState restores accounts into MemoryStateDB.
+func (m *MemoryStateDB) ImportState(accounts map[string]ExportedAccount) error {
+	for addrStr, acc := range accounts {
+		addr, err := types.HexToAddress(addrStr)
+		if err != nil {
+			continue
+		}
+		bal, _ := uint256.FromDecimal(acc.Balance)
+		if bal != nil {
+			m.balances[addr] = bal
+		}
+		m.nonces[addr] = acc.Nonce
+		if len(acc.Code) > 0 {
+			codeBytes, err := hex.DecodeString(acc.Code)
+			if err == nil {
+				m.codes[addr] = codeBytes
+			}
+		}
+		if len(acc.Storage) > 0 {
+			m.storage[addr] = make(map[types.Hash]types.Hash)
+			for kStr, vStr := range acc.Storage {
+				k, errK := types.HexToHash(kStr)
+				v, errV := types.HexToHash(vStr)
+				if errK == nil && errV == nil {
+					m.storage[addr][k] = v
+				}
+			}
+		}
+	}
+	return nil
+}
+
 
