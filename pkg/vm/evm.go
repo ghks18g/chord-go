@@ -85,7 +85,7 @@ func (evm *EVM) Execute(code []byte, input []byte, gas uint64) (returnData []byt
 		switch {
 		case op == STOP:
 			gasCost = GasZero
-		case op == ADD || op == SUB || op == LT || op == GT || op == EQ || op == ISZERO || op == AND || op == OR || op == XOR || op == NOT:
+		case op == ADD || op == SUB || op == LT || op == GT || op == SLT || op == SGT || op == EQ || op == ISZERO || op == AND || op == OR || op == XOR || op == NOT || op == BYTE || op == SHL || op == SHR || op == SAR:
 			gasCost = GasVeryLow
 		case op == MUL || op == DIV || op == SDIV || op == MOD:
 			gasCost = GasLow
@@ -239,6 +239,42 @@ func (evm *EVM) Execute(code []byte, input []byte, gas uint64) (returnData []byt
 			}
 			pc++
 
+		case SLT:
+			x, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			y, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			res := uint256.NewInt(0)
+			if x.Slt(y) {
+				res.SetOne()
+			}
+			if err := stack.Push(res); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case SGT:
+			x, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			y, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			res := uint256.NewInt(0)
+			if x.Sgt(y) {
+				res.SetOne()
+			}
+			if err := stack.Push(res); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
 		case EQ:
 			x, err := stack.Pop()
 			if err != nil {
@@ -322,6 +358,79 @@ func (evm *EVM) Execute(code []byte, input []byte, gas uint64) (returnData []byt
 				return nil, gasLeft, err
 			}
 			res := new(uint256.Int).Not(x)
+			if err := stack.Push(res); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case BYTE:
+			th, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			val, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			res := new(uint256.Int).Set(val).Byte(th)
+			if err := stack.Push(res); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case SHL:
+			shift, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			val, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			res := new(uint256.Int).Lsh(val, uint(shift.Uint64()))
+			if shift.Uint64() >= 256 {
+				res.Clear()
+			}
+			if err := stack.Push(res); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case SHR:
+			shift, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			val, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			res := new(uint256.Int).Rsh(val, uint(shift.Uint64()))
+			if shift.Uint64() >= 256 {
+				res.Clear()
+			}
+			if err := stack.Push(res); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case SAR:
+			shift, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			val, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			res := new(uint256.Int).SRsh(val, uint(shift.Uint64()))
+			if shift.Uint64() >= 256 {
+				if val.Sign() < 0 {
+					res.SetAllOne()
+				} else {
+					res.Clear()
+				}
+			}
 			if err := stack.Push(res); err != nil {
 				return nil, gasLeft, err
 			}

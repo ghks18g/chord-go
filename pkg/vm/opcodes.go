@@ -28,6 +28,7 @@ const (
 	BYTE   OpCode = 0x1a
 	SHL    OpCode = 0x1b
 	SHR    OpCode = 0x1c
+	SAR    OpCode = 0x1d
 
 	SHA3 OpCode = 0x20
 
@@ -136,6 +137,10 @@ func (op OpCode) String() string {
 		return "LT"
 	case GT:
 		return "GT"
+	case SLT:
+		return "SLT"
+	case SGT:
+		return "SGT"
 	case EQ:
 		return "EQ"
 	case ISZERO:
@@ -148,6 +153,14 @@ func (op OpCode) String() string {
 		return "XOR"
 	case NOT:
 		return "NOT"
+	case BYTE:
+		return "BYTE"
+	case SHL:
+		return "SHL"
+	case SHR:
+		return "SHR"
+	case SAR:
+		return "SAR"
 	case SHA3:
 		return "SHA3"
 	case ADDRESS:

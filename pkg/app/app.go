@@ -142,12 +142,30 @@ func (a *App) DeployContract(from types.Address, code []byte, value *uint256.Int
 		a.state.AddBalance(contractAddr, value)
 	}
 
-	a.state.SetCode(contractAddr, code)
+	// Execute constructor if code is creation bytecode, and get deployed runtime code
+	deployedCode := code
+	evm := vm.NewEVM(a.state, vm.Context{
+		Caller:      from,
+		To:          contractAddr,
+		Origin:      from,
+		BlockNumber: int64(a.height),
+		Value:       value,
+	})
+	gasLimit := uint64(10_000_000)
+	ret, _, err := evm.Execute(code, nil, gasLimit)
+	if err == nil && len(ret) > 0 {
+		deployedCode = ret
+	} else if err != nil {
+		a.state.RevertToSnapshot(snapshot)
+		return types.Address{}, err
+	}
+
+	a.state.SetCode(contractAddr, deployedCode)
 
 	// Update SMT leaf
 	var key [32]byte
 	copy(key[12:], contractAddr[:])
-	codeHash := signature.Keccak256(code)
+	codeHash := signature.Keccak256(deployedCode)
 	a.tree.Update(key, codeHash)
 	a.stateRoot = a.tree.Root()
 
