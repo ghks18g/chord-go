@@ -47,25 +47,30 @@ type TxReceipt struct {
 	EffectiveGasPrice string   `json:"effectiveGasPrice"`
 	Type              string   `json:"type"`
 	Status            string   `json:"status"` // "0x1" for success
+	LogsBloom         string   `json:"logsBloom"`
 	Logs              []*TxLog `json:"logs"`
 }
 
 type RPCTransaction struct {
-	Hash             string  `json:"hash"`
-	Nonce            string  `json:"nonce"`
-	BlockHash        string  `json:"blockHash"`
-	BlockNumber      string  `json:"blockNumber"`
-	TransactionIndex string  `json:"transactionIndex"`
-	From             string  `json:"from"`
-	To               *string `json:"to"`
-	Value            string  `json:"value"`
-	Gas              string  `json:"gas"`
-	GasPrice         string  `json:"gasPrice"`
-	Input            string  `json:"input"`
-	Type             string  `json:"type"`
-	V                string  `json:"v"`
-	R                string  `json:"r"`
-	S                string  `json:"s"`
+	Hash                 string        `json:"hash"`
+	Nonce                string        `json:"nonce"`
+	BlockHash            string        `json:"blockHash"`
+	BlockNumber          string        `json:"blockNumber"`
+	TransactionIndex     string        `json:"transactionIndex"`
+	From                 string        `json:"from"`
+	To                   *string       `json:"to"`
+	Value                string        `json:"value"`
+	Gas                  string        `json:"gas"`
+	GasPrice             string        `json:"gasPrice"`
+	Input                string        `json:"input"`
+	Type                 string        `json:"type"`
+	ChainID              string        `json:"chainId,omitempty"`
+	MaxFeePerGas         string        `json:"maxFeePerGas,omitempty"`
+	MaxPriorityFeePerGas string        `json:"maxPriorityFeePerGas,omitempty"`
+	AccessList           []interface{} `json:"accessList,omitempty"`
+	V                    string        `json:"v"`
+	R                    string        `json:"r"`
+	S                    string        `json:"s"`
 }
 
 type Server struct {
@@ -155,18 +160,56 @@ func (s *Server) formatBlock(b *types.Block, height uint64, fullTx bool) map[str
 		height = b.Header.Height
 
 		if fullTx {
-			var rpcTxs []*RPCTransaction
+			rpcTxs := make([]*RPCTransaction, 0)
 			s.mu.RLock()
-			for _, tx := range b.Transactions {
+			for i, tx := range b.Transactions {
 				h := fmt.Sprintf("0x%x", tx.Hash())
+				hLower := strings.ToLower(h)
 				if stored, ok := s.txs[h]; ok {
 					rpcTxs = append(rpcTxs, stored)
+				} else if stored, ok := s.txs[hLower]; ok {
+					rpcTxs = append(rpcTxs, stored)
+				} else {
+					var toStr *string
+					if tx.To != nil {
+						str := tx.To.String()
+						toStr = &str
+					}
+					valHex := "0x0"
+					if tx.Value != nil && !tx.Value.IsZero() {
+						valHex = fmt.Sprintf("0x%x", tx.Value.Bytes())
+					}
+					inputHex := "0x"
+					if len(tx.Data) > 0 {
+						inputHex = "0x" + hex.EncodeToString(tx.Data)
+					}
+					rpcTxs = append(rpcTxs, &RPCTransaction{
+						Hash:                 h,
+						Nonce:                fmt.Sprintf("0x%x", tx.Nonce),
+						BlockHash:            blockHashStr,
+						BlockNumber:          fmt.Sprintf("0x%x", height),
+						TransactionIndex:     fmt.Sprintf("0x%x", i),
+						From:                 tx.From.String(),
+						To:                   toStr,
+						Value:                valHex,
+						Gas:                  "0x5208",
+						GasPrice:             "0x3b9aca00",
+						Input:                inputHex,
+						Type:                 "0x2",
+						ChainID:              "0x1dbd",
+						MaxFeePerGas:         "0x3b9aca00",
+						MaxPriorityFeePerGas: "0x3b9aca00",
+						AccessList:           []interface{}{},
+						V:                    "0x1",
+						R:                    "0x0",
+						S:                    "0x0",
+					})
 				}
 			}
 			s.mu.RUnlock()
 			txList = rpcTxs
 		} else {
-			var txHashes []string
+			txHashes := make([]string, 0)
 			for _, tx := range b.Transactions {
 				txHashes = append(txHashes, fmt.Sprintf("0x%x", tx.Hash()))
 			}
@@ -180,11 +223,19 @@ func (s *Server) formatBlock(b *types.Block, height uint64, fullTx bool) map[str
 		}
 		parentHashStr = fmt.Sprintf("0x%064x", prev)
 		timestampStr = fmt.Sprintf("0x%x", time.Now().Unix())
-		txList = []string{}
+		if fullTx {
+			txList = []*RPCTransaction{}
+		} else {
+			txList = []string{}
+		}
 	}
 
 	if txList == nil {
-		txList = []string{}
+		if fullTx {
+			txList = []*RPCTransaction{}
+		} else {
+			txList = []string{}
+		}
 	}
 
 	minerStr := "0xa983d897d00482feef3000ad2beef358b9fa06bc"
@@ -363,6 +414,14 @@ func (s *Server) executeRPCRequest(req *JSONRPCRequest) JSONRPCResponse {
 		if len(req.Params) > 0 {
 			var fromStr, toStr, dataStr, valStr string
 			var rawTxHashStr string
+			var txTypeHex = "0x2"
+			var vHex = "0x1"
+			var rHex = "0x0"
+			var sHex = "0x0"
+			var maxFeeHex = "0x3b9aca00"
+			var maxPriorityFeeHex = "0x3b9aca00"
+			var txNonce uint64
+			var hasRawTx = false
 
 			if rawHex, isStr := req.Params[0].(string); isStr {
 				rawBytes, err := hex.DecodeString(cleanHex(rawHex))
@@ -373,6 +432,15 @@ func (s *Server) executeRPCRequest(req *JSONRPCRequest) JSONRPCResponse {
 				var ethTx gethtypes.Transaction
 				if err := ethTx.UnmarshalBinary(rawBytes); err != nil {
 					resp.Error = map[string]interface{}{"code": -32000, "message": "failed to decode raw transaction: " + err.Error()}
+					break
+				}
+
+				// EIP-155 replay protection: If chainId is specified, it MUST match CHORD Chain ID 7613
+				if ethTx.ChainId() != nil && ethTx.ChainId().Sign() > 0 && ethTx.ChainId().Uint64() != 7613 {
+					resp.Error = map[string]interface{}{
+						"code":    -32000,
+						"message": fmt.Sprintf("invalid chain id: expected 7613, got %d", ethTx.ChainId().Uint64()),
+					}
 					break
 				}
 
@@ -395,6 +463,26 @@ func (s *Server) executeRPCRequest(req *JSONRPCRequest) JSONRPCResponse {
 					valStr = "0x" + ethTx.Value().Text(16)
 				}
 				rawTxHashStr = strings.ToLower(ethTx.Hash().Hex())
+				hasRawTx = true
+				txNonce = ethTx.Nonce()
+				txTypeHex = fmt.Sprintf("0x%x", ethTx.Type())
+
+				vVal, rVal, sVal := ethTx.RawSignatureValues()
+				if vVal != nil {
+					vHex = fmt.Sprintf("0x%x", vVal)
+				}
+				if rVal != nil {
+					rHex = fmt.Sprintf("0x%x", rVal)
+				}
+				if sVal != nil {
+					sHex = fmt.Sprintf("0x%x", sVal)
+				}
+				if ethTx.GasFeeCap() != nil && ethTx.GasFeeCap().Sign() > 0 {
+					maxFeeHex = "0x" + ethTx.GasFeeCap().Text(16)
+				}
+				if ethTx.GasTipCap() != nil && ethTx.GasTipCap().Sign() > 0 {
+					maxPriorityFeeHex = "0x" + ethTx.GasTipCap().Text(16)
+				}
 			} else if txMap, isMap := req.Params[0].(map[string]interface{}); isMap {
 				fromStr, _ = txMap["from"].(string)
 				toStr, _ = txMap["to"].(string)
@@ -406,6 +494,26 @@ func (s *Server) executeRPCRequest(req *JSONRPCRequest) JSONRPCResponse {
 			}
 
 			from, _ := types.HexToAddress(fromStr)
+			expectedNonce := s.app.GetNonce(from)
+			if hasRawTx {
+				if txNonce < expectedNonce {
+					resp.Error = map[string]interface{}{
+						"code":    -32000,
+						"message": fmt.Sprintf("nonce too low: next nonce %d, tx nonce %d", expectedNonce, txNonce),
+					}
+					break
+				}
+				if txNonce > expectedNonce {
+					resp.Error = map[string]interface{}{
+						"code":    -32000,
+						"message": fmt.Sprintf("nonce too high: next nonce %d, tx nonce %d", expectedNonce, txNonce),
+					}
+					break
+				}
+			} else {
+				txNonce = expectedNonce
+			}
+
 			var dataBytes []byte
 			if dataStr != "" {
 				b, _ := hex.DecodeString(cleanHex(dataStr))
@@ -422,6 +530,8 @@ func (s *Server) executeRPCRequest(req *JSONRPCRequest) JSONRPCResponse {
 
 			var txHash [32]byte
 			var contractAddr types.Address
+			var toPtr *types.Address
+			var toPtrStr *string
 			isDeploy := (toStr == "" || toStr == "0x" || toStr == "0x0000000000000000000000000000000000000000")
 
 			if isDeploy {
@@ -432,214 +542,131 @@ func (s *Server) executeRPCRequest(req *JSONRPCRequest) JSONRPCResponse {
 					break
 				}
 				contractAddr = addr
-
-				// Create tx record
-				tx := &types.Transaction{
-					Nonce:  s.app.GetNonce(from),
-					From:   from,
-					To:     nil,
-					Value:  val,
-					Data:   dataBytes,
-					TxType: 0,
-				}
-				if rawTxHashStr != "" {
-					var rawHash types.Hash
-					b, _ := hex.DecodeString(cleanHex(rawTxHashStr))
-					copy(rawHash[:], b)
-					tx.TxHash = &rawHash
-					txHash = rawHash
-				} else {
-					txHash = tx.Hash()
-				}
-
-				s.engine.AddTx(tx)
-				res, _ := s.engine.ProposeAndCommit(types.Address{})
-				s.app.Commit()
-
-				txHashStr := fmt.Sprintf("0x%x", txHash)
-				blockNumberStr := fmt.Sprintf("0x%x", s.app.Height())
-				var blockHashStr string
-				if res != nil && res.Block != nil {
-					blockHashStr = res.Block.Hash().Hex()
-					s.mu.Lock()
-					s.blocksByHash[strings.ToLower(blockHashStr)] = res.Block
-					s.blocksByHash[blockHashStr] = res.Block
-					s.mu.Unlock()
-				} else {
-					blockHashStr = fmt.Sprintf("0x%x", s.app.StateRoot())
-				}
-				contractAddrStr := contractAddr.String()
-				fromStrClean := from.String()
-
-				// Cache receipt with logs
-				logs := EnrichDeployLogs(contractAddrStr, txHashStr, blockHashStr, blockNumberStr)
-
-				valHex := "0x0"
-				if !val.IsZero() {
-					valHex = fmt.Sprintf("0x%x", val.Bytes())
-				}
-
-				inputHex := "0x"
-				if len(dataBytes) > 0 {
-					inputHex = "0x" + hex.EncodeToString(dataBytes)
-				}
-
-				rpcTx := &RPCTransaction{
-					Hash:             txHashStr,
-					Nonce:            fmt.Sprintf("0x%x", tx.Nonce),
-					BlockHash:        blockHashStr,
-					BlockNumber:      blockNumberStr,
-					TransactionIndex: "0x0",
-					From:             fromStrClean,
-					To:               nil,
-					Value:            valHex,
-					Gas:              "0x5208",
-					GasPrice:         "0x3b9aca00",
-					Input:            inputHex,
-					Type:             "0x0",
-					V:                "0x1b",
-					R:                "0x0",
-					S:                "0x0",
-				}
-
-				receiptObj := &TxReceipt{
-					TransactionHash:   txHashStr,
-					TransactionIndex:  "0x0",
-					BlockHash:         blockHashStr,
-					BlockNumber:       blockNumberStr,
-					From:              fromStrClean,
-					To:                nil,
-					ContractAddress:   &contractAddrStr,
-					CumulativeGasUsed: "0x5208",
-					GasUsed:           "0x5208",
-					EffectiveGasPrice: "0x3b9aca00",
-					Type:              "0x2",
-					Status:            "0x1",
-					Logs:              logs,
-				}
-				if rawTxHashStr != "" {
-					receiptObj.TransactionHash = rawTxHashStr
-					rpcTx.Hash = rawTxHashStr
-				}
-
-				s.mu.Lock()
-				s.receipts[txHashStr] = receiptObj
-				s.txs[txHashStr] = rpcTx
-				if rawTxHashStr != "" {
-					s.receipts[rawTxHashStr] = receiptObj
-					s.txs[rawTxHashStr] = rpcTx
-				}
-				s.mu.Unlock()
-				go func() { _ = s.Persist() }()
 			} else {
 				// 2. Regular Transfer or Contract Call
 				to, _ := types.HexToAddress(toStr)
-				tx := &types.Transaction{
-					Nonce:  s.app.GetNonce(from),
-					From:   from,
-					To:     &to,
-					Value:  val,
-					Data:   dataBytes,
-					TxType: 0,
-				}
-				if rawTxHashStr != "" {
-					var rawHash types.Hash
-					b, _ := hex.DecodeString(cleanHex(rawTxHashStr))
-					copy(rawHash[:], b)
-					tx.TxHash = &rawHash
-					txHash = rawHash
-				} else {
-					txHash = tx.Hash()
-				}
+				toPtr = &to
+				toClean := to.String()
+				toPtrStr = &toClean
+			}
 
+			tx := &types.Transaction{
+				Nonce:  txNonce,
+				From:   from,
+				To:     toPtr,
+				Value:  val,
+				Data:   dataBytes,
+				TxType: 0,
+			}
+			if rawTxHashStr != "" {
+				var rawHash types.Hash
+				b, _ := hex.DecodeString(cleanHex(rawTxHashStr))
+				copy(rawHash[:], b)
+				tx.TxHash = &rawHash
+				txHash = rawHash
+			} else {
+				txHash = tx.Hash()
+			}
+
+			if !isDeploy {
 				if err := s.app.ExecuteTransaction(tx); err != nil {
 					resp.Error = map[string]interface{}{"code": -32000, "message": err.Error()}
 					break
 				}
-
-				s.engine.AddTx(tx)
-				res, _ := s.engine.ProposeAndCommit(types.Address{})
-				s.app.Commit()
-
-				txHashStr := fmt.Sprintf("0x%x", txHash)
-				blockNumberStr := fmt.Sprintf("0x%x", s.app.Height())
-				var blockHashStr string
-				if res != nil && res.Block != nil {
-					blockHashStr = res.Block.Hash().Hex()
-					s.mu.Lock()
-					s.blocksByHash[strings.ToLower(blockHashStr)] = res.Block
-					s.blocksByHash[blockHashStr] = res.Block
-					s.mu.Unlock()
-				} else {
-					blockHashStr = fmt.Sprintf("0x%x", s.app.StateRoot())
-				}
-				fromStrClean := from.String()
-				toStrClean := to.String()
-
-				var logs []*TxLog
-				if s.app.StateDB() != nil && len(s.app.StateDB().GetLogs()) > 0 {
-					logs = ConvertOnChainLogs(s.app.StateDB().GetLogs(), txHashStr, blockHashStr, s.app.Height())
-				} else {
-					logs = EnrichTransactionLogs(fromStrClean, toStrClean, val, dataStr, txHashStr, blockHashStr, blockNumberStr)
-				}
-
-				valHex := "0x0"
-				if !val.IsZero() {
-					valHex = fmt.Sprintf("0x%x", val.Bytes())
-				}
-
-				inputHex := "0x"
-				if len(dataBytes) > 0 {
-					inputHex = "0x" + hex.EncodeToString(dataBytes)
-				}
-
-				rpcTx := &RPCTransaction{
-					Hash:             txHashStr,
-					Nonce:            fmt.Sprintf("0x%x", tx.Nonce),
-					BlockHash:        blockHashStr,
-					BlockNumber:      blockNumberStr,
-					TransactionIndex: "0x0",
-					From:             fromStrClean,
-					To:               &toStrClean,
-					Value:            valHex,
-					Gas:              "0x5208",
-					GasPrice:         "0x3b9aca00",
-					Input:            inputHex,
-					Type:             "0x0",
-					V:                "0x1b",
-					R:                "0x0",
-					S:                "0x0",
-				}
-
-				receiptObj := &TxReceipt{
-					TransactionHash:   txHashStr,
-					TransactionIndex:  "0x0",
-					BlockHash:         blockHashStr,
-					BlockNumber:       blockNumberStr,
-					From:              fromStrClean,
-					To:                &toStrClean,
-					CumulativeGasUsed: "0x5208",
-					GasUsed:           "0x5208",
-					EffectiveGasPrice: "0x3b9aca00",
-					Type:              "0x2",
-					Status:            "0x1",
-					Logs:              logs,
-				}
-				if rawTxHashStr != "" {
-					receiptObj.TransactionHash = rawTxHashStr
-					rpcTx.Hash = rawTxHashStr
-				}
-
-				s.mu.Lock()
-				s.receipts[txHashStr] = receiptObj
-				s.txs[txHashStr] = rpcTx
-				if rawTxHashStr != "" {
-					s.receipts[rawTxHashStr] = receiptObj
-					s.txs[rawTxHashStr] = rpcTx
-				}
-				s.mu.Unlock()
-				go func() { _ = s.Persist() }()
 			}
+
+			s.engine.AddTx(tx)
+			res, _ := s.engine.ProposeAndCommit(types.Address{})
+			s.app.Commit()
+
+			txHashStr := fmt.Sprintf("0x%x", txHash)
+			blockNumberStr := fmt.Sprintf("0x%x", s.app.Height())
+			var blockHashStr string
+			if res != nil && res.Block != nil {
+				blockHashStr = res.Block.Hash().Hex()
+				s.mu.Lock()
+				s.blocksByHash[strings.ToLower(blockHashStr)] = res.Block
+				s.blocksByHash[blockHashStr] = res.Block
+				s.mu.Unlock()
+			} else {
+				blockHashStr = fmt.Sprintf("0x%x", s.app.StateRoot())
+			}
+			fromStrClean := from.String()
+
+			var logs []*TxLog
+			var contractAddrPtr *string
+			if isDeploy {
+				contractAddrStr := contractAddr.String()
+				contractAddrPtr = &contractAddrStr
+			}
+			if s.app.StateDB() != nil && len(s.app.StateDB().GetLogs()) > 0 {
+				logs = ConvertOnChainLogs(s.app.StateDB().GetLogs(), txHashStr, blockHashStr, s.app.Height())
+			} else {
+				logs = make([]*TxLog, 0)
+			}
+
+			valHex := "0x0"
+			if !val.IsZero() {
+				valHex = fmt.Sprintf("0x%x", val.Bytes())
+			}
+
+			inputHex := "0x"
+			if len(dataBytes) > 0 {
+				inputHex = "0x" + hex.EncodeToString(dataBytes)
+			}
+
+			rpcTx := &RPCTransaction{
+				Hash:                 txHashStr,
+				Nonce:                fmt.Sprintf("0x%x", tx.Nonce),
+				BlockHash:            blockHashStr,
+				BlockNumber:          blockNumberStr,
+				TransactionIndex:     "0x0",
+				From:                 fromStrClean,
+				To:                   toPtrStr,
+				Value:                valHex,
+				Gas:                  "0x5208",
+				GasPrice:             maxFeeHex,
+				Input:                inputHex,
+				Type:                 txTypeHex,
+				ChainID:              "0x1dbd",
+				MaxFeePerGas:         maxFeeHex,
+				MaxPriorityFeePerGas: maxPriorityFeeHex,
+				AccessList:           []interface{}{},
+				V:                    vHex,
+				R:                    rHex,
+				S:                    sHex,
+			}
+
+			receiptObj := &TxReceipt{
+				TransactionHash:   txHashStr,
+				TransactionIndex:  "0x0",
+				BlockHash:         blockHashStr,
+				BlockNumber:       blockNumberStr,
+				From:              fromStrClean,
+				To:                toPtrStr,
+				ContractAddress:   contractAddrPtr,
+				CumulativeGasUsed: "0x5208",
+				GasUsed:           "0x5208",
+				EffectiveGasPrice: "0x3b9aca00",
+				Type:              txTypeHex,
+				Status:            "0x1",
+				LogsBloom:         "0x" + strings.Repeat("0", 512),
+				Logs:              logs,
+			}
+			if rawTxHashStr != "" {
+				receiptObj.TransactionHash = rawTxHashStr
+				rpcTx.Hash = rawTxHashStr
+			}
+
+			s.mu.Lock()
+			s.receipts[txHashStr] = receiptObj
+			s.txs[txHashStr] = rpcTx
+			if rawTxHashStr != "" {
+				s.receipts[rawTxHashStr] = receiptObj
+				s.txs[rawTxHashStr] = rpcTx
+			}
+			s.mu.Unlock()
+			go func() { _ = s.Persist() }()
 
 			if rawTxHashStr != "" {
 				resp.Result = rawTxHashStr

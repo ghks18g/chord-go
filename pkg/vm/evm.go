@@ -1,10 +1,14 @@
 package vm
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
+	gethcommon "github.com/ethereum/go-ethereum/common"
+	gethcrypto "github.com/ethereum/go-ethereum/crypto"
+	"github.com/ghks18g/chord-go/pkg/crypto/signature"
 	"github.com/ghks18g/chord-go/pkg/types"
 
 	"github.com/holiman/uint256"
@@ -33,6 +37,7 @@ type Context struct {
 	Value       *uint256.Int
 	ChainID     uint64
 	Coinbase    types.Address
+	BaseFee     *uint256.Int
 }
 
 // EVM is the core execution machine.
@@ -42,6 +47,7 @@ type EVM struct {
 	depth      int
 	isStatic   bool
 	returnData []byte
+	transient  map[types.Address]map[types.Hash]types.Hash
 }
 
 // NewEVM creates a new EVM instance.
@@ -52,11 +58,15 @@ func NewEVM(stateDB StateDB, ctx Context) *EVM {
 	if ctx.Value == nil {
 		ctx.Value = uint256.NewInt(0)
 	}
+	if ctx.BaseFee == nil {
+		ctx.BaseFee = uint256.NewInt(1_000_000_000)
+	}
 	return &EVM{
-		StateDB:  stateDB,
-		Context:  ctx,
-		depth:    0,
-		isStatic: false,
+		StateDB:   stateDB,
+		Context:   ctx,
+		depth:     0,
+		isStatic:  false,
+		transient: make(map[types.Address]map[types.Hash]types.Hash),
 	}
 }
 
@@ -591,6 +601,80 @@ func (evm *EVM) Execute(code []byte, input []byte, gas uint64) (returnData []byt
 			}
 			pc++
 
+		case EXTCODESIZE:
+			addrVal, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			b := addrVal.Bytes32()
+			targetAddr := types.BytesToAddress(b[12:])
+			var codeLen uint64
+			if evm.StateDB != nil {
+				codeLen = uint64(len(evm.StateDB.GetCode(targetAddr)))
+			}
+			if err := stack.Push(uint256.NewInt(codeLen)); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case EXTCODECOPY:
+			addrVal, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			memOffVal, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			codeOffVal, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			lenVal, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			b := addrVal.Bytes32()
+			targetAddr := types.BytesToAddress(b[12:])
+			var targetCode []byte
+			if evm.StateDB != nil {
+				targetCode = evm.StateDB.GetCode(targetAddr)
+			}
+			mOff := memOffVal.Uint64()
+			cOff := codeOffVal.Uint64()
+			l := lenVal.Uint64()
+			buf := make([]byte, l)
+			if cOff < uint64(len(targetCode)) {
+				copy(buf, targetCode[cOff:])
+			}
+			memory.Set(mOff, l, buf)
+			pc++
+
+		case EXTCODEHASH:
+			addrVal, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			b := addrVal.Bytes32()
+			targetAddr := types.BytesToAddress(b[12:])
+			var res *uint256.Int
+			if evm.StateDB == nil || !evm.StateDB.Exist(targetAddr) {
+				res = uint256.NewInt(0)
+			} else {
+				code := evm.StateDB.GetCode(targetAddr)
+				if len(code) == 0 {
+					emptyHash, _ := hex.DecodeString("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
+					res = new(uint256.Int).SetBytes(emptyHash)
+				} else {
+					h := signature.Keccak256(code)
+					res = new(uint256.Int).SetBytes(h[:])
+				}
+			}
+			if err := stack.Push(res); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
 		case BLOCKHASH:
 			_, err := stack.Pop()
 			if err != nil {
@@ -657,7 +741,29 @@ func (evm *EVM) Execute(code []byte, input []byte, gas uint64) (returnData []byt
 			pc++
 
 		case BASEFEE:
-			if err := stack.Push(uint256.NewInt(1_000_000_000)); err != nil {
+			bf := evm.Context.BaseFee
+			if bf == nil {
+				bf = uint256.NewInt(1_000_000_000)
+			}
+			if err := stack.Push(bf); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case BLOBHASH:
+			_, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			// Safe No-Op: return 0 hash for non-blob sovereign L1
+			if err := stack.Push(uint256.NewInt(0)); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case BLOBBASEFEE:
+			// Safe No-Op: return 1 wei minimum
+			if err := stack.Push(uint256.NewInt(1)); err != nil {
 				return nil, gasLeft, err
 			}
 			pc++
@@ -799,6 +905,77 @@ func (evm *EVM) Execute(code []byte, input []byte, gas uint64) (returnData []byt
 		case JUMPDEST:
 			pc++
 
+		case TLOAD:
+			keyInt, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			var key types.Hash
+			b := keyInt.Bytes32()
+			copy(key[:], b[:])
+			val := types.EmptyHash()
+			if evm.transient != nil && evm.transient[evm.Context.To] != nil {
+				val = evm.transient[evm.Context.To][key]
+			}
+			res := new(uint256.Int).SetBytes32(val.Bytes())
+			if err := stack.Push(res); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case TSTORE:
+			if evm.isStatic {
+				return nil, gasLeft, ErrWriteProtection
+			}
+			keyInt, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			valInt, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			var key, val types.Hash
+			kBytes := keyInt.Bytes32()
+			vBytes := valInt.Bytes32()
+			copy(key[:], kBytes[:])
+			copy(val[:], vBytes[:])
+			if evm.transient == nil {
+				evm.transient = make(map[types.Address]map[types.Hash]types.Hash)
+			}
+			if evm.transient[evm.Context.To] == nil {
+				evm.transient[evm.Context.To] = make(map[types.Hash]types.Hash)
+			}
+			evm.transient[evm.Context.To][key] = val
+			pc++
+
+		case MCOPY:
+			destVal, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			srcVal, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			lenVal, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			l := lenVal.Uint64()
+			if l > 0 {
+				dest := destVal.Uint64()
+				src := srcVal.Uint64()
+				words := (l + 31) / 32
+				reqGas := GasVeryLow + words*GasVeryLow
+				if gasLeft < reqGas {
+					return nil, gasLeft, ErrOutOfGas
+				}
+				gasLeft -= reqGas
+				memory.Copy(dest, src, l)
+			}
+			pc++
+
 		case RETURN:
 			offset, err := stack.Pop()
 			if err != nil {
@@ -895,6 +1072,116 @@ func (evm *EVM) Execute(code []byte, input []byte, gas uint64) (returnData []byt
 					Data:        data,
 					BlockNumber: uint64(evm.Context.BlockNumber),
 				})
+			}
+			pc++
+
+		case CREATE, CREATE2:
+			if evm.isStatic {
+				return nil, gasLeft, ErrWriteProtection
+			}
+			valInt, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			memOffVal, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			sizeVal, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			var saltVal *uint256.Int
+			if op == CREATE2 {
+				saltVal, err = stack.Pop()
+				if err != nil {
+					return nil, gasLeft, err
+				}
+			}
+
+			// Value transfer check
+			if !valInt.IsZero() {
+				if evm.StateDB == nil || evm.StateDB.GetBalance(evm.Context.To).Lt(valInt) {
+					if err := stack.Push(uint256.NewInt(0)); err != nil {
+						return nil, gasLeft, err
+					}
+					pc++
+					continue
+				}
+			}
+
+			mOff := memOffVal.Uint64()
+			size := sizeVal.Uint64()
+			initCode := memory.GetCopy(mOff, size)
+
+			var newAddr types.Address
+			callerCommon := gethcommon.BytesToAddress(evm.Context.To.Bytes())
+			if op == CREATE {
+				nonce := uint64(0)
+				if evm.StateDB != nil {
+					nonce = evm.StateDB.GetNonce(evm.Context.To)
+					evm.StateDB.SetNonce(evm.Context.To, nonce+1)
+				}
+				addrCommon := gethcrypto.CreateAddress(callerCommon, nonce)
+				newAddr = types.BytesToAddress(addrCommon.Bytes())
+			} else {
+				saltBytes := saltVal.Bytes32()
+				initHash := signature.Keccak256(initCode)
+				addrCommon := gethcrypto.CreateAddress2(callerCommon, saltBytes, initHash[:])
+				newAddr = types.BytesToAddress(addrCommon.Bytes())
+			}
+
+			var snap int
+			if evm.StateDB != nil {
+				snap = evm.StateDB.Snapshot()
+				evm.StateDB.CreateAccount(newAddr)
+				if !valInt.IsZero() {
+					evm.StateDB.SubBalance(evm.Context.To, valInt)
+					evm.StateDB.AddBalance(newAddr, valInt)
+				}
+			}
+
+			subEVM := &EVM{
+				StateDB: evm.StateDB,
+				Context: Context{
+					Caller:      evm.Context.To,
+					To:          newAddr,
+					Origin:      evm.Context.Origin,
+					BlockNumber: evm.Context.BlockNumber,
+					Time:        evm.Context.Time,
+					GasPrice:    evm.Context.GasPrice,
+					Value:       valInt,
+					ChainID:     evm.Context.ChainID,
+					BaseFee:     evm.Context.BaseFee,
+					Coinbase:    evm.Context.Coinbase,
+				},
+				depth:     evm.depth + 1,
+				isStatic:  false,
+				transient: evm.transient,
+			}
+
+			createGas := gasLeft - gasLeft/64
+			gasLeft -= createGas
+			runtimeCode, subGasLeft, subErr := subEVM.Execute(initCode, nil, createGas)
+			gasLeft += subGasLeft
+
+			if subErr != nil {
+				if evm.StateDB != nil {
+					evm.StateDB.RevertToSnapshot(snap)
+				}
+				evm.returnData = runtimeCode
+				if err := stack.Push(uint256.NewInt(0)); err != nil {
+					return nil, gasLeft, err
+				}
+			} else {
+				if evm.StateDB != nil {
+					evm.StateDB.SetCode(newAddr, runtimeCode)
+				}
+				evm.returnData = nil
+				res := new(uint256.Int).SetBytes(newAddr.Bytes())
+				if err := stack.Push(res); err != nil {
+					return nil, gasLeft, err
+				}
 			}
 			pc++
 
@@ -1057,15 +1344,25 @@ func (evm *EVM) Execute(code []byte, input []byte, gas uint64) (returnData []byt
 							Time:        evm.Context.Time,
 							GasPrice:    evm.Context.GasPrice,
 							Value:       evm.Context.Value,
+							ChainID:     evm.Context.ChainID,
+							BaseFee:     evm.Context.BaseFee,
+							Coinbase:    evm.Context.Coinbase,
 						}
 						subStatic = evm.isStatic
 					}
+					if subCtx.ChainID == 0 {
+						subCtx.ChainID = evm.Context.ChainID
+					}
+					if subCtx.BaseFee == nil {
+						subCtx.BaseFee = evm.Context.BaseFee
+					}
 
 					subEVM := &EVM{
-						StateDB:  evm.StateDB,
-						Context:  subCtx,
-						depth:    evm.depth + 1,
-						isStatic: subStatic,
+						StateDB:   evm.StateDB,
+						Context:   subCtx,
+						depth:     evm.depth + 1,
+						isStatic:  subStatic,
+						transient: evm.transient,
 					}
 					ret, subGasLeft, subErr = subEVM.Execute(code, input, callGas)
 				}

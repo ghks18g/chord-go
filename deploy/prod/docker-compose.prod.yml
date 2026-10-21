@@ -139,6 +139,8 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       CHORD_RPC_URL: http://node1:8545
+      CHORD_FORWARDER_ADDRESS: "0x34ec2b8950c43c126d8e7f57dd67d3f134ea1933"
+      CHORD_FAUCET_ADDRESS: "0x4c219b464eb113f4d3c7ce0a438fb2e99f6b07b6"
       PORT: 3002
     depends_on:
       - postgres
@@ -196,6 +198,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       CHORD_RPC_URL: http://node1:8545
+      CHORD_FORWARDER_ADDRESS: "0x34ec2b8950c43c126d8e7f57dd67d3f134ea1933"
       PORT: 3004
     depends_on:
       - redis
@@ -246,6 +249,11 @@ services:
     build:
       context: ../../../chord-infra
       dockerfile: docker/Dockerfile.web
+      args:
+        NEXT_PUBLIC_FORWARDER_ADDRESS: "0x34ec2b8950c43c126d8e7f57dd67d3f134ea1933"
+        NEXT_PUBLIC_FAUCET_ADDRESS: "0x4c219b464eb113f4d3c7ce0a438fb2e99f6b07b6"
+        NEXT_PUBLIC_RPC_URL: https://rpc.chordchain.space
+        NEXT_PUBLIC_EXPLORER_URL: https://scan.chordchain.space
     container_name: chordscan-web
     restart: unless-stopped
     environment:
@@ -254,6 +262,8 @@ services:
       CHORD_CORE_RPC_URL: http://node1:8545
       NEXT_PUBLIC_RPC_URL: https://rpc.chordchain.space
       NEXT_PUBLIC_EXPLORER_URL: https://scan.chordchain.space
+      NEXT_PUBLIC_FORWARDER_ADDRESS: "0x34ec2b8950c43c126d8e7f57dd67d3f134ea1933"
+      NEXT_PUBLIC_FAUCET_ADDRESS: "0x4c219b464eb113f4d3c7ce0a438fb2e99f6b07b6"
       PORT: 3000
     depends_on:
       - scan-api

@@ -43,6 +43,11 @@ const (
 	CODESIZE     OpCode = 0x38
 	CODECOPY     OpCode = 0x39
 	GASPRICE     OpCode = 0x3a
+	EXTCODESIZE  OpCode = 0x3b
+	EXTCODECOPY  OpCode = 0x3c
+	RETURNDATASIZE OpCode = 0x3d
+	RETURNDATACOPY OpCode = 0x3e
+	EXTCODEHASH  OpCode = 0x3f
 
 	BLOCKHASH   OpCode = 0x40
 	COINBASE    OpCode = 0x41
@@ -53,6 +58,8 @@ const (
 	CHAINID     OpCode = 0x46
 	SELFBALANCE OpCode = 0x47
 	BASEFEE     OpCode = 0x48
+	BLOBHASH    OpCode = 0x49
+	BLOBBASEFEE OpCode = 0x4a
 
 	POP      OpCode = 0x50
 	MLOAD    OpCode = 0x51
@@ -66,6 +73,9 @@ const (
 	MSIZE    OpCode = 0x59
 	GAS      OpCode = 0x5a
 	JUMPDEST OpCode = 0x5b
+	TLOAD    OpCode = 0x5c
+	TSTORE   OpCode = 0x5d
+	MCOPY    OpCode = 0x5e
 	PUSH0    OpCode = 0x5f
 
 	PUSH1  OpCode = 0x60
@@ -82,38 +92,41 @@ const (
 	SWAP2  OpCode = 0x91
 	SWAP16 OpCode = 0x9f
 
-	RETURNDATASIZE OpCode = 0x3d
-	RETURNDATACOPY OpCode = 0x3e
-
 	LOG0 OpCode = 0xa0
 	LOG1 OpCode = 0xa1
 	LOG2 OpCode = 0xa2
 	LOG3 OpCode = 0xa3
 	LOG4 OpCode = 0xa4
 
+	CREATE       OpCode = 0xf0
 	CALL         OpCode = 0xf1
 	RETURN       OpCode = 0xf3
 	DELEGATECALL OpCode = 0xf4
+	CREATE2      OpCode = 0xf5
 	STATICCALL   OpCode = 0xfa
 	REVERT       OpCode = 0xfd
 )
 
 // Gas costs
 const (
-	GasZero     uint64 = 0
-	GasBase     uint64 = 2
-	GasVeryLow  uint64 = 3
-	GasLow      uint64 = 5
-	GasMid      uint64 = 8
-	GasHigh     uint64 = 10
-	GasJumpDest uint64 = 1
-	GasSStore   uint64 = 100
-	GasSLoad    uint64 = 50
-	GasKeccak   uint64 = 30
-	GasLog      uint64 = 375
-	GasLogTopic uint64 = 375
-	GasLogData  uint64 = 8
-	GasCall     uint64 = 100
+	GasZero       uint64 = 0
+	GasBase       uint64 = 2
+	GasVeryLow    uint64 = 3
+	GasLow        uint64 = 5
+	GasMid        uint64 = 8
+	GasHigh       uint64 = 10
+	GasJumpDest   uint64 = 1
+	GasSStore     uint64 = 100
+	GasSLoad      uint64 = 50
+	GasKeccak     uint64 = 30
+	GasLog        uint64 = 375
+	GasLogTopic   uint64 = 375
+	GasLogData    uint64 = 8
+	GasCall       uint64 = 100
+	GasCreate     uint64 = 32000
+	GasTStore     uint64 = 100
+	GasTLoad      uint64 = 100
+	GasExtCode    uint64 = 100
 )
 
 // String returns the human readable opcode name.
@@ -247,14 +260,34 @@ func (op OpCode) String() string {
 		return "LOG3"
 	case LOG4:
 		return "LOG4"
+	case EXTCODESIZE:
+		return "EXTCODESIZE"
+	case EXTCODECOPY:
+		return "EXTCODECOPY"
+	case EXTCODEHASH:
+		return "EXTCODEHASH"
+	case BLOBHASH:
+		return "BLOBHASH"
+	case BLOBBASEFEE:
+		return "BLOBBASEFEE"
+	case TLOAD:
+		return "TLOAD"
+	case TSTORE:
+		return "TSTORE"
+	case MCOPY:
+		return "MCOPY"
+	case CREATE:
+		return "CREATE"
 	case CALL:
 		return "CALL"
-	case DELEGATECALL:
-		return "DELEGATECALL"
-	case STATICCALL:
-		return "STATICCALL"
 	case RETURN:
 		return "RETURN"
+	case DELEGATECALL:
+		return "DELEGATECALL"
+	case CREATE2:
+		return "CREATE2"
+	case STATICCALL:
+		return "STATICCALL"
 	case REVERT:
 		return "REVERT"
 	default:

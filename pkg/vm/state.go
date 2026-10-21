@@ -31,6 +31,10 @@ type StateDB interface {
 	AddLog(log *types.Log)
 	GetLogs() []*types.Log
 	ClearLogs()
+
+	// Dirty accounts tracking for SMT synchronization
+	GetDirtyAccounts() []types.Address
+	ClearDirtyAccounts()
 }
 
 type snapshot struct {
@@ -44,25 +48,27 @@ type snapshot struct {
 
 // MemoryStateDB is an in-memory implementation of StateDB for testing.
 type MemoryStateDB struct {
-	balances   map[types.Address]*uint256.Int
-	nonces     map[types.Address]uint64
-	codes      map[types.Address][]byte
-	storage    map[types.Address]map[types.Hash]types.Hash
-	logs       []*types.Log
-	snapshots  []snapshot
-	nextSnapID int
+	balances      map[types.Address]*uint256.Int
+	nonces        map[types.Address]uint64
+	codes         map[types.Address][]byte
+	storage       map[types.Address]map[types.Hash]types.Hash
+	logs          []*types.Log
+	snapshots     []snapshot
+	nextSnapID    int
+	dirtyAccounts map[types.Address]struct{}
 }
 
 // NewMemoryStateDB creates an empty in-memory state DB.
 func NewMemoryStateDB() *MemoryStateDB {
 	return &MemoryStateDB{
-		balances:   make(map[types.Address]*uint256.Int),
-		nonces:     make(map[types.Address]uint64),
-		codes:      make(map[types.Address][]byte),
-		storage:    make(map[types.Address]map[types.Hash]types.Hash),
-		logs:       make([]*types.Log, 0),
-		snapshots:  make([]snapshot, 0),
-		nextSnapID: 1,
+		balances:      make(map[types.Address]*uint256.Int),
+		nonces:        make(map[types.Address]uint64),
+		codes:         make(map[types.Address][]byte),
+		storage:       make(map[types.Address]map[types.Hash]types.Hash),
+		logs:          make([]*types.Log, 0),
+		snapshots:     make([]snapshot, 0),
+		nextSnapID:    1,
+		dirtyAccounts: make(map[types.Address]struct{}),
 	}
 }
 
@@ -89,6 +95,7 @@ func (m *MemoryStateDB) GetBalance(addr types.Address) *uint256.Int {
 func (m *MemoryStateDB) SetBalance(addr types.Address, amount *uint256.Int) {
 	m.CreateAccount(addr)
 	m.balances[addr] = amount.Clone()
+	m.dirtyAccounts[addr] = struct{}{}
 }
 
 func (m *MemoryStateDB) AddBalance(addr types.Address, amount *uint256.Int) {
@@ -96,6 +103,7 @@ func (m *MemoryStateDB) AddBalance(addr types.Address, amount *uint256.Int) {
 	cur := m.GetBalance(addr)
 	cur.Add(cur, amount)
 	m.balances[addr] = cur
+	m.dirtyAccounts[addr] = struct{}{}
 }
 
 func (m *MemoryStateDB) SubBalance(addr types.Address, amount *uint256.Int) {
@@ -103,6 +111,7 @@ func (m *MemoryStateDB) SubBalance(addr types.Address, amount *uint256.Int) {
 	cur := m.GetBalance(addr)
 	cur.Sub(cur, amount)
 	m.balances[addr] = cur
+	m.dirtyAccounts[addr] = struct{}{}
 }
 
 func (m *MemoryStateDB) GetNonce(addr types.Address) uint64 {
@@ -112,6 +121,7 @@ func (m *MemoryStateDB) GetNonce(addr types.Address) uint64 {
 func (m *MemoryStateDB) SetNonce(addr types.Address, nonce uint64) {
 	m.CreateAccount(addr)
 	m.nonces[addr] = nonce
+	m.dirtyAccounts[addr] = struct{}{}
 }
 
 func (m *MemoryStateDB) GetCode(addr types.Address) []byte {
@@ -123,6 +133,7 @@ func (m *MemoryStateDB) SetCode(addr types.Address, code []byte) {
 	c := make([]byte, len(code))
 	copy(c, code)
 	m.codes[addr] = c
+	m.dirtyAccounts[addr] = struct{}{}
 }
 
 func (m *MemoryStateDB) GetState(addr types.Address, key types.Hash) types.Hash {
@@ -138,6 +149,19 @@ func (m *MemoryStateDB) SetState(addr types.Address, key types.Hash, value types
 		m.storage[addr] = make(map[types.Hash]types.Hash)
 	}
 	m.storage[addr][key] = value
+	m.dirtyAccounts[addr] = struct{}{}
+}
+
+func (m *MemoryStateDB) GetDirtyAccounts() []types.Address {
+	out := make([]types.Address, 0, len(m.dirtyAccounts))
+	for a := range m.dirtyAccounts {
+		out = append(out, a)
+	}
+	return out
+}
+
+func (m *MemoryStateDB) ClearDirtyAccounts() {
+	m.dirtyAccounts = make(map[types.Address]struct{})
 }
 
 // Snapshot creates a state snapshot and returns its identifier.

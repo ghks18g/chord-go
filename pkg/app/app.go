@@ -5,7 +5,6 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/ghks18g/chord-go/pkg/app/hooks"
 	"github.com/ghks18g/chord-go/pkg/crypto/signature"
 	"github.com/ghks18g/chord-go/pkg/store/smt"
 	"github.com/ghks18g/chord-go/pkg/types"
@@ -150,6 +149,7 @@ func (a *App) DeployContract(from types.Address, code []byte, value *uint256.Int
 		Origin:      from,
 		BlockNumber: int64(a.height),
 		Value:       value,
+		ChainID:     7613,
 	})
 	gasLimit := uint64(10_000_000)
 	ret, _, err := evm.Execute(code, nil, gasLimit)
@@ -217,9 +217,6 @@ func (a *App) ExecuteTransaction(tx *types.Transaction) error {
 		a.state.AddBalance(*tx.To, tx.Value)
 	}
 
-	// Execute system hooks (Faucet claim/request, EIP-2771 forwarder)
-	_ = hooks.HandleFaucetAndForwarder(a.state, a.tree, tx)
-
 	// Execute EVM bytecode or Precompile if destination is a contract
 	if tx.To != nil {
 		if precompile, isPre := vm.PrecompiledContracts[*tx.To]; isPre {
@@ -235,6 +232,7 @@ func (a *App) ExecuteTransaction(tx *types.Transaction) error {
 					Origin:      tx.From,
 					BlockNumber: int64(a.height),
 					Value:       tx.Value,
+					ChainID:     7613,
 				})
 				gasLimit := uint64(10_000_000)
 				if _, _, err := evm.Execute(code, tx.Data, gasLimit); err != nil {
@@ -248,22 +246,16 @@ func (a *App) ExecuteTransaction(tx *types.Transaction) error {
 	fromNonce := a.state.GetNonce(tx.From)
 	a.state.SetNonce(tx.From, fromNonce+1)
 
-	// Sync SMT leaf nodes for From and To
-	var fromKey [32]byte
-	copy(fromKey[12:], tx.From[:])
-	fromBalBytes := a.state.GetBalance(tx.From).Bytes()
-	var fromVal [32]byte
-	copy(fromVal[32-len(fromBalBytes):], fromBalBytes)
-	a.tree.Update(fromKey, fromVal)
-
-	if tx.To != nil {
-		var toKey [32]byte
-		copy(toKey[12:], tx.To[:])
-		toBalBytes := a.state.GetBalance(*tx.To).Bytes()
-		var toVal [32]byte
-		copy(toVal[32-len(toBalBytes):], toBalBytes)
-		a.tree.Update(toKey, toVal)
+	// Sync SMT leaf nodes for all dirty accounts modified during state transfer or EVM execution
+	for _, dirtyAddr := range a.state.GetDirtyAccounts() {
+		var key [32]byte
+		copy(key[12:], dirtyAddr[:])
+		balBytes := a.state.GetBalance(dirtyAddr).Bytes()
+		var val [32]byte
+		copy(val[32-len(balBytes):], balBytes)
+		a.tree.Update(key, val)
 	}
+	a.state.ClearDirtyAccounts()
 
 	a.stateRoot = a.tree.Root()
 	return nil

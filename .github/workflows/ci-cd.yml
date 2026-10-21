@@ -1,0 +1,108 @@
+name: Chord-Go Core CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: production-vps-deployment
+  cancel-in-progress: false
+
+jobs:
+  test-and-build:
+    name: Test & Build Core Engine
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: true
+
+      - name: Run Unit & Regression Tests
+        run: |
+          go test -v ./pkg/vm ./pkg/rpc
+          go test ./...
+
+      - name: Cross-compile Linux AMD64 Static Binaries
+        run: |
+          mkdir -p bin/linux/amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o bin/linux/amd64/chordd ./cmd/chordd
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o bin/linux/amd64/chordcli ./cmd/chordcli
+          chmod +x bin/linux/amd64/*
+          ls -lh bin/linux/amd64/
+
+      - name: Upload Linux Binaries Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chord-linux-amd64-binaries
+          path: bin/linux/amd64/
+          retention-days: 7
+
+  deploy-vps:
+    name: Deploy to Production VPS
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download Linux Binaries Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: chord-linux-amd64-binaries
+          path: bin/linux/amd64/
+
+      - name: Transfer Pre-compiled Binaries to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER || 'root' }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "bin/linux/amd64/chordd,bin/linux/amd64/chordcli"
+          target: "/opt/chord/chord-go/"
+
+      - name: Execute Remote Node Rolling Update
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER || 'root' }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            echo "🚀 [CI/CD] Starting Chord-Go Validator Network update on VPS..."
+
+            # 1. Update source code from repository
+            git config --global --add safe.directory /opt/chord/chord-go || true
+            cd /opt/chord/chord-go
+            git remote set-url origin https://github.com/${{ github.repository }}.git 2>/dev/null || git remote add origin https://github.com/${{ github.repository }}.git
+            git fetch origin
+            CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+            git reset --hard "origin/$CURRENT_BRANCH" || git reset --hard origin/main || git reset --hard origin/master
+
+            # Ensure binary permissions
+            chmod +x /opt/chord/chord-go/bin/linux/amd64/chordd /opt/chord/chord-go/bin/linux/amd64/chordcli
+
+            # 2. Rebuild 4-node cluster docker images
+            cd /opt/chord/chord-go/deploy/prod
+            docker compose -f docker-compose.prod.yml build node1 node2 node3 node4
+
+            # 3. Rolling update 4 validator nodes (preserving persistent volumes)
+            docker compose -f docker-compose.prod.yml up -d --no-deps node1 node2 node3 node4
+
+            # 4. Clean dangling images
+            docker image prune -f
+
+            # 5. Verify consensus RPC health
+            echo "🔍 [CI/CD] Verifying CHORD Node consensus RPC health..."
+            sleep 3
+            CURRENT_HEIGHT=$(curl -s -X POST http://127.0.0.1:8545 -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' | grep -o '"result":"0x[0-9a-fA-F]*"' | cut -d'"' -f4)
+            echo "✅ Node1 RPC active at Block Height: $CURRENT_HEIGHT"
+
+            docker ps --filter "name=chord-node" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+            echo "✅ [CI/CD] Chord-Go Validator Nodes updated successfully!"

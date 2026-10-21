@@ -57,13 +57,23 @@ func (m *Memory) SetByte(offset uint64, val byte) {
 	m.store[offset] = val
 }
 
+// Copy performs memory-to-memory copy (EIP-5656 MCOPY), safely handling overlapping ranges.
+func (m *Memory) Copy(dest, src, size uint64) {
+	if size == 0 {
+		return
+	}
+	maxOff := dest + size
+	if src+size > maxOff {
+		maxOff = src + size
+	}
+	m.Resize(maxOff)
+	copy(m.store[dest:dest+size], m.store[src:src+size])
+}
+
 // GetCopy returns a copy of length size starting from offset.
 func (m *Memory) GetCopy(offset, size uint64) []byte {
 	if size == 0 {
 		return []byte{}
-	}
-	if offset > uint64(len(m.store)) {
-		return make([]byte, size)
 	}
 	m.Resize(offset + size)
 	res := make([]byte, size)
@@ -79,3 +89,4 @@ func (m *Memory) GetPtr(offset, size uint64) []byte {
 	m.Resize(offset + size)
 	return m.store[offset : offset+size]
 }
+
