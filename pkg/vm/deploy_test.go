@@ -81,3 +81,49 @@ func TestEVM_ContractDeployment(t *testing.T) {
 		t.Fatalf("receive call failed: %v", err)
 	}
 }
+
+func TestEVM_ForwarderDeployment(t *testing.T) {
+	data, err := os.ReadFile("../../contracts/ChordForwarder.json")
+	if err != nil {
+		t.Fatalf("failed to read artifact: %v", err)
+	}
+
+	var artifact struct {
+		Bytecode string `json:"bytecode"`
+	}
+	if err := json.Unmarshal(data, &artifact); err != nil {
+		t.Fatalf("failed to unmarshal artifact: %v", err)
+	}
+
+	cleanHex := artifact.Bytecode
+	if cleanHex[:2] == "0x" {
+		cleanHex = cleanHex[2:]
+	}
+	initCode, err := hex.DecodeString(cleanHex)
+	if err != nil {
+		t.Fatalf("failed to decode initcode: %v", err)
+	}
+
+	state := NewMemoryStateDB()
+	caller, _ := types.HexToAddress("0xa983D897D00482FEEf3000Ad2BEEf358B9fA06bC")
+	contractAddr, _ := types.HexToAddress("0x34ec2b8950c43c126d8e7f57dd67d3f134ea1933")
+
+	evm := NewEVM(state, Context{
+		Caller:      caller,
+		To:          contractAddr,
+		Origin:      caller,
+		BlockNumber: 2,
+		ChainID:     7613,
+		Value:       uint256.NewInt(0),
+	})
+
+	deployedRuntimeCode, gasLeft, err := evm.Execute(initCode, nil, 10_000_000)
+	t.Logf("Forwarder deployment err: %v, gasLeft: %d, deployedLen: %d", err, gasLeft, len(deployedRuntimeCode))
+
+	if err != nil {
+		t.Fatalf("forwarder constructor failed: %v", err)
+	}
+	if len(deployedRuntimeCode) == 0 {
+		t.Fatalf("forwarder constructor returned empty deployed bytecode")
+	}
+}

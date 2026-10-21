@@ -44,6 +44,16 @@ const (
 	CODECOPY     OpCode = 0x39
 	GASPRICE     OpCode = 0x3a
 
+	BLOCKHASH   OpCode = 0x40
+	COINBASE    OpCode = 0x41
+	TIMESTAMP   OpCode = 0x42
+	NUMBER      OpCode = 0x43
+	PREVRANDAO  OpCode = 0x44
+	GASLIMIT    OpCode = 0x45
+	CHAINID     OpCode = 0x46
+	SELFBALANCE OpCode = 0x47
+	BASEFEE     OpCode = 0x48
+
 	POP      OpCode = 0x50
 	MLOAD    OpCode = 0x51
 	MSTORE   OpCode = 0x52
@@ -179,6 +189,24 @@ func (op OpCode) String() string {
 		return "CALLDATASIZE"
 	case CALLDATACOPY:
 		return "CALLDATACOPY"
+	case BLOCKHASH:
+		return "BLOCKHASH"
+	case COINBASE:
+		return "COINBASE"
+	case TIMESTAMP:
+		return "TIMESTAMP"
+	case NUMBER:
+		return "NUMBER"
+	case PREVRANDAO:
+		return "PREVRANDAO"
+	case GASLIMIT:
+		return "GASLIMIT"
+	case CHAINID:
+		return "CHAINID"
+	case SELFBALANCE:
+		return "SELFBALANCE"
+	case BASEFEE:
+		return "BASEFEE"
 	case POP:
 		return "POP"
 	case MLOAD:

@@ -3,6 +3,7 @@ package vm
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/ghks18g/chord-go/pkg/types"
 
@@ -30,6 +31,8 @@ type Context struct {
 	Time        int64
 	GasPrice    *uint256.Int
 	Value       *uint256.Int
+	ChainID     uint64
+	Coinbase    types.Address
 }
 
 // EVM is the core execution machine.
@@ -111,6 +114,12 @@ func (evm *EVM) Execute(code []byte, input []byte, gas uint64) (returnData []byt
 			gasCost = GasJumpDest
 		case op == SHA3:
 			gasCost = GasKeccak
+		case op == BLOCKHASH:
+			gasCost = GasKeccak
+		case op == COINBASE || op == TIMESTAMP || op == NUMBER || op == PREVRANDAO || op == GASLIMIT || op == CHAINID || op == BASEFEE:
+			gasCost = GasBase
+		case op == SELFBALANCE:
+			gasCost = GasLow
 		case op == CALL || op == STATICCALL || op == DELEGATECALL:
 			gasCost = GasCall
 		case op == RETURNDATASIZE || op == RETURNDATACOPY:
@@ -578,6 +587,77 @@ func (evm *EVM) Execute(code []byte, input []byte, gas uint64) (returnData []byt
 
 		case GASPRICE:
 			if err := stack.Push(evm.Context.GasPrice); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case BLOCKHASH:
+			_, err := stack.Pop()
+			if err != nil {
+				return nil, gasLeft, err
+			}
+			if err := stack.Push(uint256.NewInt(0)); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case COINBASE:
+			res := new(uint256.Int).SetBytes(evm.Context.Coinbase.Bytes())
+			if err := stack.Push(res); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case TIMESTAMP:
+			t := evm.Context.Time
+			if t == 0 {
+				t = time.Now().Unix()
+			}
+			if err := stack.Push(uint256.NewInt(uint64(t))); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case NUMBER:
+			if err := stack.Push(uint256.NewInt(uint64(evm.Context.BlockNumber))); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case PREVRANDAO:
+			if err := stack.Push(uint256.NewInt(0)); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case GASLIMIT:
+			if err := stack.Push(uint256.NewInt(30_000_000)); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case CHAINID:
+			cid := evm.Context.ChainID
+			if cid == 0 {
+				cid = 7613
+			}
+			if err := stack.Push(uint256.NewInt(cid)); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case SELFBALANCE:
+			bal := evm.StateDB.GetBalance(evm.Context.To)
+			if bal == nil {
+				bal = uint256.NewInt(0)
+			}
+			if err := stack.Push(bal); err != nil {
+				return nil, gasLeft, err
+			}
+			pc++
+
+		case BASEFEE:
+			if err := stack.Push(uint256.NewInt(1_000_000_000)); err != nil {
 				return nil, gasLeft, err
 			}
 			pc++
